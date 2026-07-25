@@ -256,6 +256,7 @@ function saveSession(){
   }catch(e){}
 }
 function clearSession(){ try{ localStorage.removeItem(SAVE_KEY); }catch(e){} }
+function leaveRoom(){ clearSession(); location.reload(); }
 
 const saved = loadSavedSession();
 const state = {
@@ -495,7 +496,10 @@ function render(){
     const players = sortedPlayers();
     html = `
       <div class="stack">
-        <div class="eyebrow">وضع المضيف</div>
+        <div class="row" style="justify-content:space-between; align-items:center;">
+          <div class="eyebrow">وضع المضيف</div>
+          <span class="muted" style="font-size:12px; text-decoration:underline; cursor:pointer;" onclick="leaveRoom()">خروج / غرفة جديدة</span>
+        </div>
         <div class="ticket">
           <div class="code">${state.roomCode}</div>
           <div class="label">كود الغرفة — شاركه مع اللاعبين</div>
@@ -534,7 +538,10 @@ function render(){
     const players = sortedPlayers();
     html = `
       <div class="stack">
-        <div class="eyebrow">في الغرفة ${state.roomCode}</div>
+        <div class="row" style="justify-content:space-between; align-items:center;">
+          <div class="eyebrow">في الغرفة ${state.roomCode}</div>
+          <span class="muted" style="font-size:12px; text-decoration:underline; cursor:pointer;" onclick="leaveRoom()">خروج / غرفة جديدة</span>
+        </div>
         <h1 style="font-size:26px;">أهلاً ${state.playerName} 👋</h1>
         <div class="card stack">
           <p class="muted">بانتظار أن يبدأ المضيف اللعبة…</p>
@@ -686,10 +693,19 @@ function handleJoinClick(){
 function restoreSession(){
   if(!configReady) return false;
   if(!saved || !saved.roomCode || !saved.role) return false;
-  state.role = saved.role;
-  state.roomCode = saved.roomCode;
-  state.playerName = saved.playerName || '';
-  attachRoomListener();
+  // تحقق أول إن الغرفة المحفوظة لسا موجودة ومو منتهية قبل ما نرجع لها تلقائيًا
+  roomRef(saved.roomCode).once('value').then(snap => {
+    const room = snap.val();
+    if(!room || room.status === 'end'){
+      clearSession();
+      render();
+      return;
+    }
+    state.role = saved.role;
+    state.roomCode = saved.roomCode;
+    state.playerName = saved.playerName || '';
+    attachRoomListener();
+  }).catch(() => { clearSession(); render(); });
   return true;
 }
 
