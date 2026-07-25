@@ -241,10 +241,25 @@ const QUESTIONS = [
   { cat:"جغرافيا", q:"أي قارة يمر خط الاستواء في منتصفها تقريبًا؟", options:["أوروبا","أفريقيا","آسيا","أستراليا"], correct:1 },
 ];
 const QUESTION_DURATION = 12000;
+const REVEAL_DURATION = 2500;
 
 /* ================== حالة التطبيق ================== */
+const SAVE_KEY = 'quizSession_v1';
+function loadSavedSession(){
+  try{ const raw = localStorage.getItem(SAVE_KEY); return raw ? JSON.parse(raw) : null; }catch(e){ return null; }
+}
+function saveSession(){
+  try{
+    localStorage.setItem(SAVE_KEY, JSON.stringify({
+      role: state.role, roomCode: state.roomCode, myId: state.myId, playerName: state.playerName
+    }));
+  }catch(e){}
+}
+function clearSession(){ try{ localStorage.removeItem(SAVE_KEY); }catch(e){} }
+
+const saved = loadSavedSession();
 const state = {
-  role: null, roomCode: null, myId: Math.random().toString(36).slice(2,8),
+  role: null, roomCode: null, myId: (saved && saved.myId) || Math.random().toString(36).slice(2,8),
   playerName:'', players:{}, answers:{}, currentIndex:-1, questionStart:null,
   duration: QUESTION_DURATION, correctIndex:null, myAnswerThisRound:null,
   screen:'home', lastStatus:null, lastIndex:null,
@@ -313,10 +328,12 @@ function createRoom(name){
   initialPlayers[state.myId] = { name, score:0 };
   roomRef(state.roomCode).set({ status:'lobby', currentIndex:-1, players:initialPlayers, createdAt: Date.now() });
   attachRoomListener();
+  saveSession();
 }
 function startGame(){
   roomRef(state.roomCode).update({ status:'question', currentIndex:0, questionStart:Date.now(), duration:QUESTION_DURATION, correctIndex:null });
 }
+let nextTimeout = null;
 function revealAnswer(){
   const q = QUESTIONS[state.currentIndex];
   const answers = state.answers[state.currentIndex] || {};
@@ -332,7 +349,12 @@ function revealAnswer(){
     }
   }
   roomRef(state.roomCode).update({ status:'reveal', correctIndex:q.correct, players:updatedPlayers });
-  setTimeout(nextQuestion, 3500);
+  clearTimeout(nextTimeout);
+  nextTimeout = setTimeout(nextQuestion, REVEAL_DURATION);
+}
+function goToNextNow(){
+  clearTimeout(nextTimeout);
+  nextQuestion();
 }
 function nextQuestion(){
   const nextIndex = state.currentIndex + 1;
@@ -349,7 +371,7 @@ function joinRoom(name, code){
   state.playerName=name;
   state.roomCode=code.toUpperCase();
   roomRef(state.roomCode).child('players').child(state.myId).set({ name, score:0 })
-    .then(() => { attachRoomListener(); })
+    .then(() => { attachRoomListener(); saveSession(); })
     .catch(err => {
       state.screen='join-form';
       state.joinError = 'تعذّر الانضمام: ' + err.message + ' — تأكد إن Realtime Database مفعّل ووضع test mode لسا فعّال بمشروع Firebase.';
@@ -540,6 +562,7 @@ function render(){
             </div>`).join('')}
           </div>
         </div>
+        <button class="btn-primary btn-block" onclick="goToNextNow()">التالي الآن ⏭</button>
       </div>`;
   }
 
@@ -603,7 +626,7 @@ function render(){
             </div>`).join('')}
           </div>
         </div>
-        <button class="btn-secondary btn-block" onclick="location.reload()">جولة جديدة</button>
+        <button class="btn-secondary btn-block" onclick="clearSession(); location.reload()">جولة جديدة</button>
       </div>`;
   }
 
@@ -625,8 +648,30 @@ function handleJoinClick(){
   state.joinError = null;
   joinRoom(name, code);
 }
+/* ================== استعادة الجلسة بعد التحديث/الإغلاق ================== */
+function restoreSession(){
+  if(!configReady) return false;
+  if(!saved || !saved.roomCode || !saved.role) return false;
+  state.role = saved.role;
+  state.roomCode = saved.roomCode;
+  state.playerName = saved.playerName || '';
+  attachRoomListener();
+  return true;
+}
 
-render();
+// إعادة مزامنة فورية كل ما رجع التطبيق يكون ظاهر (بعد قفل الشاشة أو تبديل التطبيقات)
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible' && state.roomCode && db){
+    roomRef(state.roomCode).once('value').then(snap => handleRoomSnapshot(snap.val()));
+  }
+});
+window.addEventListener('online', () => {
+  if(state.roomCode && db){
+    roomRef(state.roomCode).once('value').then(snap => handleRoomSnapshot(snap.val()));
+  }
+});
+
+if(!restoreSession()) render();
 </script>
 </body>
 </html>
