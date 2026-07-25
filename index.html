@@ -262,6 +262,7 @@ const state = {
   role: null, roomCode: null, myId: (saved && saved.myId) || Math.random().toString(36).slice(2,8),
   playerName:'', players:{}, answers:{}, currentIndex:-1, questionStart:null,
   duration: QUESTION_DURATION, correctIndex:null, myAnswerThisRound:null,
+  questionIds: [], numQuestionsChoice: 20, durationChoice: QUESTION_DURATION,
   screen:'home', lastStatus:null, lastIndex:null,
 };
 const app = document.getElementById('app');
@@ -281,6 +282,16 @@ function avatarColor(id){
   return colors[h % colors.length];
 }
 function sortedPlayers(){ return Object.entries(state.players).sort((a,b)=>(b[1].score||0)-(a[1].score||0)); }
+function shuffledIndices(n, count){
+  const arr = Array.from({length:n}, (_,i)=>i);
+  for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; }
+  return arr.slice(0, count);
+}
+function totalQuestions(){ return (state.questionIds && state.questionIds.length) || QUESTIONS.length; }
+function getQuestion(index){
+  if(state.questionIds && state.questionIds.length) return QUESTIONS[state.questionIds[index]];
+  return QUESTIONS[index];
+}
 
 /* ================== الاتصال بالغرفة (Firebase) ================== */
 function attachRoomListener(){
@@ -298,6 +309,7 @@ function handleRoomSnapshot(room){
     state.questionStart = room.questionStart;
     state.duration = room.duration || QUESTION_DURATION;
     state.correctIndex = room.correctIndex;
+    if(room.questionIds) state.questionIds = room.questionIds;
     if(room.currentIndex !== undefined) state.myAnswerThisRound = null;
     onStatusChange(room.status);
   } else {
@@ -331,11 +343,21 @@ function createRoom(name){
   saveSession();
 }
 function startGame(){
-  roomRef(state.roomCode).update({ status:'question', currentIndex:0, questionStart:Date.now(), duration:QUESTION_DURATION, correctIndex:null });
+  const total = QUESTIONS.length;
+  let count = parseInt(document.getElementById('numQInput')?.value, 10);
+  if(!count || count < 1) count = state.numQuestionsChoice || 20;
+  count = Math.max(1, Math.min(total, count));
+  let dur = parseInt(document.getElementById('durSelect')?.value, 10);
+  if(!dur) dur = state.durationChoice || QUESTION_DURATION;
+  const questionIds = shuffledIndices(total, count);
+  roomRef(state.roomCode).update({
+    status:'question', currentIndex:0, questionStart:Date.now(),
+    duration:dur, correctIndex:null, questionIds
+  });
 }
 let nextTimeout = null;
 function revealAnswer(){
-  const q = QUESTIONS[state.currentIndex];
+  const q = getQuestion(state.currentIndex);
   const answers = state.answers[state.currentIndex] || {};
   const updatedPlayers = {...state.players};
   for(const id in answers){
@@ -358,10 +380,10 @@ function goToNextNow(){
 }
 function nextQuestion(){
   const nextIndex = state.currentIndex + 1;
-  if(nextIndex >= QUESTIONS.length){
+  if(nextIndex >= totalQuestions()){
     roomRef(state.roomCode).update({ status:'end' });
   } else {
-    roomRef(state.roomCode).update({ status:'question', currentIndex:nextIndex, questionStart:Date.now(), duration:QUESTION_DURATION, correctIndex:null });
+    roomRef(state.roomCode).update({ status:'question', currentIndex:nextIndex, questionStart:Date.now(), duration:state.duration, correctIndex:null });
   }
 }
 
@@ -491,6 +513,18 @@ function render(){
                 </span>
                 <span class="badge-live"><span class="dot"></span>متصل</span>
               </div>`).join('') + `</div>`}
+          <div class="stack" style="border-top:1px solid var(--line); padding-top:14px;">
+            <label class="muted" style="font-size:13px;">عدد الأسئلة (المتوفر: ${QUESTIONS.length})</label>
+            <input id="numQInput" type="number" min="1" max="${QUESTIONS.length}" value="${state.numQuestionsChoice}" oninput="state.numQuestionsChoice=this.value">
+            <label class="muted" style="font-size:13px;">الوقت لكل سؤال</label>
+            <select id="durSelect" onchange="state.durationChoice=parseInt(this.value,10)" style="font-family:var(--font-body); font-size:16px; padding:14px 16px; border-radius:12px; border:1.5px solid var(--line); background:rgba(255,255,255,0.04); color:var(--ink); width:100%;">
+              <option value="8000" ${state.durationChoice==8000?'selected':''}>8 ثواني</option>
+              <option value="12000" ${state.durationChoice==12000?'selected':''}>12 ثانية</option>
+              <option value="15000" ${state.durationChoice==15000?'selected':''}>15 ثانية</option>
+              <option value="20000" ${state.durationChoice==20000?'selected':''}>20 ثانية</option>
+              <option value="30000" ${state.durationChoice==30000?'selected':''}>30 ثانية</option>
+            </select>
+          </div>
           <button class="btn-primary btn-block ${players.length===0?'btn-disabled':''}" ${players.length===0?'disabled':''} onclick="startGame()">ابدأ اللعبة</button>
         </div>
       </div>`;
@@ -515,14 +549,14 @@ function render(){
   }
 
   else if(state.screen === 'host-question'){
-    const q = QUESTIONS[state.currentIndex];
+    const q = getQuestion(state.currentIndex);
     const total = Object.keys(state.players).length;
     const answered = Object.keys(state.answers[state.currentIndex] || {}).length;
     const myAnswered = state.myAnswerThisRound !== null;
     html = `
       <div class="stack">
         <div class="row" style="justify-content:space-between;">
-          <span class="pill">سؤال ${state.currentIndex+1} / ${QUESTIONS.length} · ${q.cat||''}</span>
+          <span class="pill">سؤال ${state.currentIndex+1} / ${totalQuestions()} · ${q.cat||''}</span>
           <span class="pill">${answered} / ${total} أجابوا</span>
         </div>
         <div class="timerbar-track"><div class="timerbar-fill" id="timerFill" style="width:100%"></div></div>
@@ -539,7 +573,7 @@ function render(){
   }
 
   else if(state.screen === 'host-reveal'){
-    const q = QUESTIONS[state.currentIndex];
+    const q = getQuestion(state.currentIndex);
     const players = sortedPlayers();
     const mine = state.players[state.myId];
     html = `
@@ -567,11 +601,11 @@ function render(){
   }
 
   else if(state.screen === 'player-question'){
-    const q = QUESTIONS[state.currentIndex];
+    const q = getQuestion(state.currentIndex);
     const answered = state.myAnswerThisRound !== null;
     html = `
       <div class="stack">
-        <span class="pill">سؤال ${state.currentIndex+1} / ${QUESTIONS.length} · ${q.cat||''}</span>
+        <span class="pill">سؤال ${state.currentIndex+1} / ${totalQuestions()} · ${q.cat||''}</span>
         <div class="timerbar-track"><div class="timerbar-fill" id="timerFill" style="width:100%"></div></div>
         <div class="card stack">
           <h2 style="font-size:20px; line-height:1.5;">${q.q}</h2>
