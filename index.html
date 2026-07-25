@@ -218,8 +218,13 @@ function joinRoom(name, code){
   state.role='player';
   state.playerName=name;
   state.roomCode=code.toUpperCase();
-  roomRef(state.roomCode).child('players').child(state.myId).set({ name, score:0 });
-  attachRoomListener();
+  roomRef(state.roomCode).child('players').child(state.myId).set({ name, score:0 })
+    .then(() => { attachRoomListener(); })
+    .catch(err => {
+      state.screen='join-form';
+      state.joinError = 'تعذّر الانضمام: ' + err.message + ' — تأكد إن Realtime Database مفعّل ووضع test mode لسا فعّال بمشروع Firebase.';
+      render();
+    });
 }
 function submitAnswer(choiceIndex){
   if(state.myAnswerThisRound !== null) return;
@@ -290,8 +295,9 @@ function render(){
         <div class="card stack">
           <input id="nameInput" placeholder="اسمك" maxlength="16">
           <input id="codeInput" placeholder="كود الغرفة" maxlength="4" style="text-transform:uppercase;">
+          ${state.joinError ? `<div class="warn">${state.joinError}</div>` : ''}
           <button class="btn-primary btn-block" onclick="handleJoinClick()">انضمام</button>
-          <button class="btn-secondary btn-block" onclick="state.screen='home'; render();">رجوع</button>
+          <button class="btn-secondary btn-block" onclick="state.screen='home'; state.joinError=null; render();">رجوع</button>
         </div>
       </div>`;
   }
@@ -442,11 +448,13 @@ function render(){
   app.innerHTML = html;
 }
 
-function showJoinForm(){ state.screen='join-form'; render(); }
+function showJoinForm(){ state.joinError=null; state.screen='join-form'; render(); }
 function handleJoinClick(){
   const name = document.getElementById('nameInput').value.trim();
   const code = document.getElementById('codeInput').value.trim();
-  if(!name || code.length !== 4) return;
+  if(!name){ state.joinError='لازم تكتب اسمك أولاً.'; render(); return; }
+  if(code.length !== 4){ state.joinError='كود الغرفة لازم يكون 4 أحرف بالضبط.'; render(); return; }
+  state.joinError = null;
   joinRoom(name, code);
 }
 
