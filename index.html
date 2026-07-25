@@ -178,10 +178,13 @@ function onStatusChange(status){
 }
 
 /* ================== منطق المضيف (Host) ================== */
-function createRoom(){
+function createRoom(name){
   state.role='host';
+  state.playerName = name;
   state.roomCode=genCode();
-  roomRef(state.roomCode).set({ status:'lobby', currentIndex:-1, players:{}, createdAt: Date.now() });
+  const initialPlayers = {};
+  initialPlayers[state.myId] = { name, score:0 };
+  roomRef(state.roomCode).set({ status:'lobby', currentIndex:-1, players:initialPlayers, createdAt: Date.now() });
   attachRoomListener();
 }
 function startGame(){
@@ -280,10 +283,24 @@ function render(){
         <div class="eyebrow">مسابقة جماعية حيّة</div>
         <h1 style="font-size:30px;">شبّك واجمع نقاط</h1>
         <div class="card stack">
-          <button class="btn-primary btn-block" onclick="createRoom()">إنشاء مسابقة (مضيف)</button>
-          <button class="btn-secondary btn-block" onclick="showJoinForm()">الانضمام كلاعب</button>
+          <button class="btn-primary btn-block" onclick="showHostForm()">إنشاء مسابقة والعب فيها</button>
+          <button class="btn-secondary btn-block" onclick="showJoinForm()">الانضمام كلاعب فقط</button>
         </div>
         <p class="footnote">مبني على Firebase Realtime Database — يشتغل بين أي جهازين على الإنترنت، مش بس نفس المتصفح.</p>
+      </div>`;
+  }
+
+  else if(state.screen === 'host-name-form'){
+    html = `
+      <div class="stack">
+        <div class="eyebrow">إنشاء مسابقة</div>
+        <h1 style="font-size:26px;">شو اسمك؟</h1>
+        <div class="card stack">
+          <input id="hostNameInput" placeholder="اسمك" maxlength="16">
+          ${state.hostError ? `<div class="warn">${state.hostError}</div>` : ''}
+          <button class="btn-primary btn-block" onclick="handleHostClick()">إنشاء الغرفة</button>
+          <button class="btn-secondary btn-block" onclick="state.screen='home'; render();">رجوع</button>
+        </div>
       </div>`;
   }
 
@@ -319,7 +336,7 @@ function render(){
             players.map(([id,p]) => `
               <div class="player-chip">
                 <span class="row" style="align-items:center; gap:10px;">
-                  <span class="avatar" style="background:${avatarColor(id)}">${initials(p.name)}</span>${p.name}
+                  <span class="avatar" style="background:${avatarColor(id)}">${initials(p.name)}</span>${p.name}${id===state.myId?' (أنت)':''}
                 </span>
                 <span class="badge-live"><span class="dot"></span>متصل</span>
               </div>`).join('')}
@@ -350,6 +367,7 @@ function render(){
     const q = QUESTIONS[state.currentIndex];
     const total = Object.keys(state.players).length;
     const answered = Object.keys(state.answers[state.currentIndex] || {}).length;
+    const myAnswered = state.myAnswerThisRound !== null;
     html = `
       <div class="stack">
         <div class="row" style="justify-content:space-between;">
@@ -359,17 +377,26 @@ function render(){
         <div class="timerbar-track"><div class="timerbar-fill" id="timerFill" style="width:100%"></div></div>
         <div class="card stack">
           <h2 style="font-size:22px; line-height:1.5;">${q.q}</h2>
-          <div class="stack">${q.options.map(opt => `<div class="opt">${opt}</div>`).join('')}</div>
+          <div class="stack">
+            ${q.options.map((opt,i) => `
+              <button class="opt ${myAnswered && i===state.myAnswerThisRound ? 'correct' : ''}" ${myAnswered?'disabled':''}
+                onclick="submitAnswer(${i})">${opt}</button>`).join('')}
+          </div>
         </div>
-        <p class="muted" style="text-align:center;">اللاعبون يجيبون من أجهزتهم الآن</p>
+        ${myAnswered ? '<p class="muted" style="text-align:center;">تم إرسال إجابتك، بانتظار البقية…</p>' : '<p class="muted" style="text-align:center;">جاوب أنت كمان قبل ما ينتهي الوقت</p>'}
       </div>`;
   }
 
   else if(state.screen === 'host-reveal'){
     const q = QUESTIONS[state.currentIndex];
     const players = sortedPlayers();
+    const mine = state.players[state.myId];
     html = `
       <div class="stack">
+        <div class="card stack" style="text-align:center;">
+          <div class="muted">نقاطك حتى الآن</div>
+          <div class="big-score">${mine ? mine.score : 0}</div>
+        </div>
         <h2>الإجابة الصحيحة</h2>
         <div class="card stack">
           <div class="stack">${q.options.map((opt,i) => `<div class="opt ${i===q.correct?'correct':''}">${opt}</div>`).join('')}</div>
@@ -378,7 +405,7 @@ function render(){
           <h3>الترتيب الحالي</h3>
           ${players.map(([id,p],i) => `
             <div class="score-row">
-              <span class="row" style="align-items:center; gap:10px;"><span class="rank">${i+1}</span>${p.name}</span>
+              <span class="row" style="align-items:center; gap:10px;"><span class="rank">${i+1}</span>${p.name}${id===state.myId?' (أنت)':''}</span>
               <span>${p.score||0}</span>
             </div>`).join('')}
         </div>
@@ -448,6 +475,12 @@ function render(){
   app.innerHTML = html;
 }
 
+function showHostForm(){ state.hostError=null; state.screen='host-name-form'; render(); }
+function handleHostClick(){
+  const name = document.getElementById('hostNameInput').value.trim();
+  if(!name){ state.hostError='لازم تكتب اسمك أولاً.'; render(); return; }
+  createRoom(name);
+}
 function showJoinForm(){ state.joinError=null; state.screen='join-form'; render(); }
 function handleJoinClick(){
   const name = document.getElementById('nameInput').value.trim();
