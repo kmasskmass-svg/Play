@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>مسابقة أونلاين</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-app-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-database-compat.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@600;800;900&family=Tajawal:wght@400;500;700&display=swap');
+
+:root{
+  --bg-0:#120C28;
+  --bg-1:#1E1548;
+  --card:#241A52;
+  --line:rgba(255,255,255,0.08);
+  --ink:#F4F1FF;
+  --muted:#9C93C4;
+  --yellow:#FFD23F;
+  --pink:#FF4D8D;
+  --teal:#2DD4BF;
+  --font-display:'Cairo', sans-serif;
+  --font-body:'Tajawal', sans-serif;
+}
+*{box-sizing:border-box;}
+html,body{height:100%;}
+body{
+  margin:0;
+  min-height:100vh;
+  background:
+    radial-gradient(circle at 15% 10%, rgba(255,210,63,0.10), transparent 40%),
+    radial-gradient(circle at 85% 85%, rgba(255,77,141,0.12), transparent 45%),
+    linear-gradient(160deg, var(--bg-0), var(--bg-1));
+  color:var(--ink);
+  font-family:var(--font-body);
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:24px;
+}
+#app{width:100%; max-width:560px;}
+h1,h2,h3{font-family:var(--font-display); margin:0;}
+.eyebrow{font-family:var(--font-display); font-weight:800; font-size:12px; letter-spacing:.12em; color:var(--yellow); text-transform:uppercase;}
+.card{background:linear-gradient(180deg, var(--card), rgba(36,26,82,0.6)); border:1px solid var(--line); border-radius:22px; padding:28px; box-shadow:0 20px 60px rgba(0,0,0,0.35);}
+.stack{display:flex; flex-direction:column; gap:14px;}
+.row{display:flex; gap:12px;}
+button{font-family:var(--font-display); font-weight:800; font-size:16px; border:none; border-radius:14px; padding:16px 20px; cursor:pointer; transition:transform .15s ease, filter .15s ease;}
+button:active{transform:scale(0.97);}
+.btn-primary{background:var(--yellow); color:#221800;}
+.btn-primary:hover{filter:brightness(1.08);}
+.btn-secondary{background:transparent; color:var(--ink); border:1.5px solid var(--line);}
+.btn-secondary:hover{border-color:var(--muted);}
+.btn-block{width:100%;}
+.btn-disabled{opacity:.4; cursor:not-allowed;}
+input{font-family:var(--font-body); font-size:16px; padding:14px 16px; border-radius:12px; border:1.5px solid var(--line); background:rgba(255,255,255,0.04); color:var(--ink); outline:none; width:100%;}
+input:focus{border-color:var(--yellow);}
+input::placeholder{color:var(--muted);}
+.ticket{position:relative; background:var(--bg-0); border:2px dashed rgba(255,210,63,0.45); border-radius:16px; padding:22px; text-align:center;}
+.ticket .code{font-family:var(--font-display); font-weight:900; font-size:44px; letter-spacing:.18em; color:var(--yellow);}
+.ticket .label{font-size:12px; color:var(--muted); margin-top:4px;}
+.muted{color:var(--muted); font-size:14px; line-height:1.7;}
+.pill{display:inline-block; padding:5px 12px; border-radius:999px; background:rgba(255,255,255,0.06); font-size:13px; color:var(--muted);}
+.player-chip{display:flex; align-items:center; justify-content:space-between; background:rgba(255,255,255,0.04); border-radius:12px; padding:10px 14px; font-weight:500;}
+.avatar{width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-family:var(--font-display); font-weight:800; font-size:14px; color:#221800;}
+.timerbar-track{height:8px; border-radius:999px; background:rgba(255,255,255,0.08); overflow:hidden;}
+.timerbar-fill{height:100%; background:linear-gradient(90deg, var(--teal), var(--yellow));}
+.opt{text-align:right; border:1.5px solid var(--line); background:rgba(255,255,255,0.03); color:var(--ink); padding:16px 18px; border-radius:14px; font-family:var(--font-body); font-weight:500; font-size:16px; width:100%;}
+.opt:hover{border-color:var(--yellow);}
+.opt.correct{background:rgba(45,212,191,0.18); border-color:var(--teal); color:var(--teal);}
+.opt.wrong{background:rgba(255,77,141,0.18); border-color:var(--pink); color:var(--pink);}
+.score-row{display:flex; align-items:center; justify-content:space-between; padding:12px 16px; border-radius:12px; background:rgba(255,255,255,0.04); font-weight:500;}
+.score-row .rank{font-family:var(--font-display); font-weight:900; color:var(--yellow); width:28px;}
+.big-score{font-family:var(--font-display); font-weight:900; font-size:38px; color:var(--yellow);}
+.footnote{margin-top:18px; font-size:12.5px; color:var(--muted); line-height:1.8; border-top:1px solid var(--line); padding-top:14px;}
+.badge-live{display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--teal);}
+.dot{width:7px; height:7px; border-radius:50%; background:var(--teal); animation:pulse 1.4s infinite;}
+@keyframes pulse{0%,100%{opacity:1;}50%{opacity:.3;}}
+.warn{background:rgba(255,77,141,0.12); border:1px solid var(--pink); color:var(--pink); padding:16px; border-radius:14px; font-size:14px; line-height:1.8;}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script>
+/* =========================================================
+   1) اربط مشروع Firebase الخاص فيك هون
+   - روح إلى https://console.firebase.google.com
+   - أنشئ مشروع جديد (مجاني)
+   - من القائمة الجانبية: Build → Realtime Database → Create Database → ابدأ بوضع "test mode"
+   - من ⚙️ Project settings → Your apps → Web app (</>) → انسخ كائن الإعدادات وحطه هون بدل القيم تحت
+   ========================================================= */
+const firebaseConfig = {
+  apiKey: "AIzaSyBNdYtzQqyBpYV-HGJ4UpXHQkXS7mcj0nc",
+  authDomain: "letsplay-436d1.firebaseapp.com",
+  databaseURL: "https://letsplay-436d1-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "letsplay-436d1",
+  storageBucket: "letsplay-436d1.firebasestorage.app",
+  messagingSenderId: "957551991558",
+  appId: "1:957551991558:web:053f5cb3b51bb9faec5c87"
+};
+
+let db = null;
+const configReady = firebaseConfig.apiKey !== "YOUR_API_KEY";
+if(configReady){
+  firebase.initializeApp(firebaseConfig);
+  db = firebase.database();
+}
+
+/* ================== بيانات المسابقة (استبدلها بأسئلتك) ================== */
+const QUESTIONS = [
+  { q:"ما هي عاصمة السعودية؟", options:["جدة","الرياض","الدمام","مكة"], correct:1 },
+  { q:"كم عدد قارات العالم؟", options:["5","6","7","8"], correct:2 },
+  { q:"ما هو أكبر محيط في العالم؟", options:["الأطلسي","الهندي","الهادئ","المتجمد الشمالي"], correct:2 },
+  { q:"في أي عام بدأ بث الإنترنت للعامة تقريبًا؟", options:["1975","1983","1991","2000"], correct:2 },
+  { q:"ما هو العنصر الأكثر وفرة في الكون؟", options:["الأكسجين","الهيدروجين","الكربون","الحديد"], correct:1 },
+];
+const QUESTION_DURATION = 12000;
+
+/* ================== حالة التطبيق ================== */
+const state = {
+  role: null, roomCode: null, myId: Math.random().toString(36).slice(2,8),
+  playerName:'', players:{}, answers:{}, currentIndex:-1, questionStart:null,
+  duration: QUESTION_DURATION, correctIndex:null, myAnswerThisRound:null,
+  screen:'home', lastStatus:null, lastIndex:null,
+};
+const app = document.getElementById('app');
+let timerRAF = null;
+
+/* ================== أدوات مساعدة ================== */
+function genCode(){
+  const chars='ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; let c='';
+  for(let i=0;i<4;i++) c += chars[Math.floor(Math.random()*chars.length)];
+  return c;
+}
+function roomRef(code){ return db.ref('rooms/' + code); }
+function initials(name){ return (name||'?').trim().slice(0,1).toUpperCase(); }
+function avatarColor(id){
+  const colors=['#FFD23F','#FF4D8D','#2DD4BF','#8B7CFF','#FF9F5B'];
+  let h=0; for(const ch of id) h+=ch.charCodeAt(0);
+  return colors[h % colors.length];
+}
+function sortedPlayers(){ return Object.entries(state.players).sort((a,b)=>(b[1].score||0)-(a[1].score||0)); }
+
+/* ================== الاتصال بالغرفة (Firebase) ================== */
+function attachRoomListener(){
+  roomRef(state.roomCode).on('value', snap => handleRoomSnapshot(snap.val()));
+}
+function handleRoomSnapshot(room){
+  if(!room) return;
+  state.players = room.players || {};
+  state.answers = room.answers || {};
+  const statusChanged = room.status !== state.lastStatus || room.currentIndex !== state.lastIndex;
+  if(statusChanged){
+    state.lastStatus = room.status;
+    state.lastIndex = room.currentIndex;
+    state.currentIndex = room.currentIndex;
+    state.questionStart = room.questionStart;
+    state.duration = room.duration || QUESTION_DURATION;
+    state.correctIndex = room.correctIndex;
+    if(room.currentIndex !== undefined) state.myAnswerThisRound = null;
+    onStatusChange(room.status);
+  } else {
+    render();
+  }
+}
+function onStatusChange(status){
+  if(state.role === 'host'){
+    if(status==='lobby') state.screen='host-lobby';
+    if(status==='question'){ state.screen='host-question'; startHostTimer(state.duration, revealAnswer); }
+    if(status==='reveal') state.screen='host-reveal';
+    if(status==='end') state.screen='end';
+  } else {
+    if(status==='lobby') state.screen='player-lobby';
+    if(status==='question'){ state.screen='player-question'; startPlayerTimer(state.duration); }
+    if(status==='reveal') state.screen='player-reveal';
+    if(status==='end') state.screen='end';
+  }
+  render();
+}
+
+/* ================== منطق المضيف (Host) ================== */
+function createRoom(){
+  state.role='host';
+  state.roomCode=genCode();
+  roomRef(state.roomCode).set({ status:'lobby', currentIndex:-1, players:{}, createdAt: Date.now() });
+  attachRoomListener();
+}
+function startGame(){
+  roomRef(state.roomCode).update({ status:'question', currentIndex:0, questionStart:Date.now(), duration:QUESTION_DURATION, correctIndex:null });
+}
+function revealAnswer(){
+  const q = QUESTIONS[state.currentIndex];
+  const answers = state.answers[state.currentIndex] || {};
+  const updatedPlayers = {...state.players};
+  for(const id in answers){
+    if(!updatedPlayers[id]) continue;
+    const a = answers[id];
+    if(a.choice === q.correct){
+      const elapsed = a.time - state.questionStart;
+      const speedFactor = Math.max(0, 1 - elapsed/state.duration);
+      const points = Math.round(500 + 500*speedFactor);
+      updatedPlayers[id] = {...updatedPlayers[id], score:(updatedPlayers[id].score||0)+points};
+    }
+  }
+  roomRef(state.roomCode).update({ status:'reveal', correctIndex:q.correct, players:updatedPlayers });
+  setTimeout(nextQuestion, 3500);
+}
+function nextQuestion(){
+  const nextIndex = state.currentIndex + 1;
+  if(nextIndex >= QUESTIONS.length){
+    roomRef(state.roomCode).update({ status:'end' });
+  } else {
+    roomRef(state.roomCode).update({ status:'question', currentIndex:nextIndex, questionStart:Date.now(), duration:QUESTION_DURATION, correctIndex:null });
+  }
+}
+
+/* ================== منطق اللاعب (Player) ================== */
+function joinRoom(name, code){
+  state.role='player';
+  state.playerName=name;
+  state.roomCode=code.toUpperCase();
+  roomRef(state.roomCode).child('players').child(state.myId).set({ name, score:0 });
+  attachRoomListener();
+}
+function submitAnswer(choiceIndex){
+  if(state.myAnswerThisRound !== null) return;
+  state.myAnswerThisRound = choiceIndex;
+  render();
+  roomRef(state.roomCode).child('answers').child(state.currentIndex).child(state.myId).set({ choice:choiceIndex, time:Date.now() });
+}
+
+/* ================== المؤقتات ================== */
+function startHostTimer(duration, onDone){
+  cancelAnimationFrame(timerRAF);
+  const start = state.questionStart;
+  const bar = () => {
+    const el = document.getElementById('timerFill');
+    if(el){ const pct = Math.max(0, 1-(Date.now()-start)/duration); el.style.width = (pct*100)+'%'; }
+    if(Date.now()-start < duration){ timerRAF = requestAnimationFrame(bar); } else { onDone(); }
+  };
+  timerRAF = requestAnimationFrame(bar);
+}
+function startPlayerTimer(duration){
+  cancelAnimationFrame(timerRAF);
+  const start = state.questionStart;
+  const bar = () => {
+    const el = document.getElementById('timerFill');
+    if(el){ const pct = Math.max(0, 1-(Date.now()-start)/duration); el.style.width = (pct*100)+'%'; }
+    if(Date.now()-start < duration){ timerRAF = requestAnimationFrame(bar); }
+  };
+  timerRAF = requestAnimationFrame(bar);
+}
+
+/* ================== العرض (Render) ================== */
+function render(){
+  let html = '';
+
+  if(!configReady){
+    html = `
+      <div class="stack">
+        <div class="eyebrow">إعداد مطلوب</div>
+        <h1 style="font-size:26px;">وصّل مشروع Firebase أولاً</h1>
+        <div class="warn">
+          لسا ما حطيت إعدادات مشروع Firebase بالكود (المتغيّر <b>firebaseConfig</b> بأعلى ملف الـ HTML).
+          روح لـ console.firebase.google.com، أنشئ مشروع، فعّل Realtime Database بوضع test mode،
+          وانسخ إعدادات تطبيق الويب مكان القيم "YOUR_..." ثم أعد تحميل الصفحة.
+        </div>
+      </div>`;
+    app.innerHTML = html;
+    return;
+  }
+
+  if(state.screen === 'home'){
+    html = `
+      <div class="stack">
+        <div class="eyebrow">مسابقة جماعية حيّة</div>
+        <h1 style="font-size:30px;">شبّك واجمع نقاط</h1>
+        <div class="card stack">
+          <button class="btn-primary btn-block" onclick="createRoom()">إنشاء مسابقة (مضيف)</button>
+          <button class="btn-secondary btn-block" onclick="showJoinForm()">الانضمام كلاعب</button>
+        </div>
+        <p class="footnote">مبني على Firebase Realtime Database — يشتغل بين أي جهازين على الإنترنت، مش بس نفس المتصفح.</p>
+      </div>`;
+  }
+
+  else if(state.screen === 'join-form'){
+    html = `
+      <div class="stack">
+        <div class="eyebrow">انضمام</div>
+        <h1 style="font-size:26px;">أدخل بياناتك</h1>
+        <div class="card stack">
+          <input id="nameInput" placeholder="اسمك" maxlength="16">
+          <input id="codeInput" placeholder="كود الغرفة" maxlength="4" style="text-transform:uppercase;">
+          <button class="btn-primary btn-block" onclick="handleJoinClick()">انضمام</button>
+          <button class="btn-secondary btn-block" onclick="state.screen='home'; render();">رجوع</button>
+        </div>
+      </div>`;
+  }
+
+  else if(state.screen === 'host-lobby'){
+    const players = sortedPlayers();
+    html = `
+      <div class="stack">
+        <div class="eyebrow">وضع المضيف</div>
+        <div class="ticket">
+          <div class="code">${state.roomCode}</div>
+          <div class="label">كود الغرفة — شاركه مع اللاعبين</div>
+        </div>
+        <div class="card stack">
+          <div class="row" style="justify-content:space-between; align-items:center;">
+            <h3>اللاعبون</h3><span class="pill">${players.length} منضمّ</span>
+          </div>
+          ${players.length===0 ? '<p class="muted">بانتظار انضمام اللاعبين…</p>' :
+            players.map(([id,p]) => `
+              <div class="player-chip">
+                <span class="row" style="align-items:center; gap:10px;">
+                  <span class="avatar" style="background:${avatarColor(id)}">${initials(p.name)}</span>${p.name}
+                </span>
+                <span class="badge-live"><span class="dot"></span>متصل</span>
+              </div>`).join('')}
+          <button class="btn-primary btn-block ${players.length===0?'btn-disabled':''}" ${players.length===0?'disabled':''} onclick="startGame()">ابدأ اللعبة</button>
+        </div>
+      </div>`;
+  }
+
+  else if(state.screen === 'player-lobby'){
+    const players = sortedPlayers();
+    html = `
+      <div class="stack">
+        <div class="eyebrow">في الغرفة ${state.roomCode}</div>
+        <h1 style="font-size:26px;">أهلاً ${state.playerName} 👋</h1>
+        <div class="card stack">
+          <p class="muted">بانتظار أن يبدأ المضيف اللعبة…</p>
+          ${players.map(([id,p]) => `
+            <div class="player-chip">
+              <span class="row" style="align-items:center; gap:10px;">
+                <span class="avatar" style="background:${avatarColor(id)}">${initials(p.name)}</span>${p.name}
+              </span>
+            </div>`).join('')}
+        </div>
+      </div>`;
+  }
+
+  else if(state.screen === 'host-question'){
+    const q = QUESTIONS[state.currentIndex];
+    const total = Object.keys(state.players).length;
+    const answered = Object.keys(state.answers[state.currentIndex] || {}).length;
+    html = `
+      <div class="stack">
+        <div class="row" style="justify-content:space-between;">
+          <span class="pill">سؤال ${state.currentIndex+1} / ${QUESTIONS.length}</span>
+          <span class="pill">${answered} / ${total} أجابوا</span>
+        </div>
+        <div class="timerbar-track"><div class="timerbar-fill" id="timerFill" style="width:100%"></div></div>
+        <div class="card stack">
+          <h2 style="font-size:22px; line-height:1.5;">${q.q}</h2>
+          <div class="stack">${q.options.map(opt => `<div class="opt">${opt}</div>`).join('')}</div>
+        </div>
+        <p class="muted" style="text-align:center;">اللاعبون يجيبون من أجهزتهم الآن</p>
+      </div>`;
+  }
+
+  else if(state.screen === 'host-reveal'){
+    const q = QUESTIONS[state.currentIndex];
+    const players = sortedPlayers();
+    html = `
+      <div class="stack">
+        <h2>الإجابة الصحيحة</h2>
+        <div class="card stack">
+          <div class="stack">${q.options.map((opt,i) => `<div class="opt ${i===q.correct?'correct':''}">${opt}</div>`).join('')}</div>
+        </div>
+        <div class="card stack">
+          <h3>الترتيب الحالي</h3>
+          ${players.map(([id,p],i) => `
+            <div class="score-row">
+              <span class="row" style="align-items:center; gap:10px;"><span class="rank">${i+1}</span>${p.name}</span>
+              <span>${p.score||0}</span>
+            </div>`).join('')}
+        </div>
+      </div>`;
+  }
+
+  else if(state.screen === 'player-question'){
+    const q = QUESTIONS[state.currentIndex];
+    const answered = state.myAnswerThisRound !== null;
+    html = `
+      <div class="stack">
+        <span class="pill">سؤال ${state.currentIndex+1} / ${QUESTIONS.length}</span>
+        <div class="timerbar-track"><div class="timerbar-fill" id="timerFill" style="width:100%"></div></div>
+        <div class="card stack">
+          <h2 style="font-size:20px; line-height:1.5;">${q.q}</h2>
+          <div class="stack">
+            ${q.options.map((opt,i) => `
+              <button class="opt ${answered && i===state.myAnswerThisRound ? 'correct' : ''}" ${answered?'disabled':''}
+                onclick="submitAnswer(${i})">${opt}</button>`).join('')}
+          </div>
+        </div>
+        ${answered ? '<p class="muted" style="text-align:center;">تم إرسال إجابتك، بانتظار البقية…</p>' : ''}
+      </div>`;
+  }
+
+  else if(state.screen === 'player-reveal'){
+    const players = sortedPlayers();
+    const mine = state.players[state.myId];
+    html = `
+      <div class="stack">
+        <div class="card stack" style="text-align:center;">
+          <div class="muted">نقاطك حتى الآن</div>
+          <div class="big-score">${mine ? mine.score : 0}</div>
+        </div>
+        <div class="card stack">
+          <h3>الترتيب</h3>
+          ${players.map(([id,p],i) => `
+            <div class="score-row">
+              <span class="row" style="align-items:center; gap:10px;"><span class="rank">${i+1}</span>${p.name}</span>
+              <span>${p.score||0}</span>
+            </div>`).join('')}
+        </div>
+        <p class="muted" style="text-align:center;">السؤال التالي قريبًا…</p>
+      </div>`;
+  }
+
+  else if(state.screen === 'end'){
+    const players = sortedPlayers();
+    html = `
+      <div class="stack">
+        <div class="eyebrow">انتهت المسابقة</div>
+        <h1 style="font-size:28px;">🏆 النتائج النهائية</h1>
+        <div class="card stack">
+          ${players.map(([id,p],i) => `
+            <div class="score-row">
+              <span class="row" style="align-items:center; gap:10px;">
+                <span class="rank">${i+1}</span>
+                <span class="avatar" style="background:${avatarColor(id)}">${initials(p.name)}</span>${p.name}
+              </span>
+              <span>${p.score||0}</span>
+            </div>`).join('')}
+        </div>
+        <button class="btn-secondary btn-block" onclick="location.reload()">جولة جديدة</button>
+      </div>`;
+  }
+
+  app.innerHTML = html;
+}
+
+function showJoinForm(){ state.screen='join-form'; render(); }
+function handleJoinClick(){
+  const name = document.getElementById('nameInput').value.trim();
+  const code = document.getElementById('codeInput').value.trim();
+  if(!name || code.length !== 4) return;
+  joinRoom(name, code);
+}
+
+render();
+</script>
+</body>
+</html>
