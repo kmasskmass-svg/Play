@@ -268,6 +268,7 @@ const QUESTIONS = [
 ];
 const QUESTION_DURATION = 12000;
 const REVEAL_DURATION = 2500;
+const CATEGORIES = [...new Set(QUESTIONS.map(q => q.cat))];
 
 /* ================== حالة التطبيق ================== */
 const SAVE_KEY = 'quizSession_v1';
@@ -290,6 +291,7 @@ const state = {
   playerName:'', players:{}, answers:{}, currentIndex:-1, questionStart:null,
   duration: QUESTION_DURATION, correctIndex:null, myAnswerThisRound:null,
   questionIds: [], numQuestionsChoice: 20, durationChoice: QUESTION_DURATION,
+  selectedCats: [...CATEGORIES],
   screen:'instructions', lastStatus:null, lastIndex:null,
 };
 const app = document.getElementById('app');
@@ -370,17 +372,27 @@ function createRoom(name){
   saveSession();
 }
 function startGame(){
-  const total = QUESTIONS.length;
+  const cats = (state.selectedCats && state.selectedCats.length) ? state.selectedCats : CATEGORIES;
+  const pool = QUESTIONS.map((q,i)=>i).filter(i => cats.includes(QUESTIONS[i].cat));
+  if(pool.length === 0){ alert('لازم تختار فئة وحدة على الأقل قبل ما تبدأ.'); return; }
   let count = parseInt(document.getElementById('numQInput')?.value, 10);
   if(!count || count < 1) count = state.numQuestionsChoice || 20;
-  count = Math.max(1, Math.min(total, count));
+  count = Math.max(1, Math.min(pool.length, count));
   let dur = parseInt(document.getElementById('durSelect')?.value, 10);
   if(!dur) dur = state.durationChoice || QUESTION_DURATION;
-  const questionIds = shuffledIndices(total, count);
+  // اسحب عشوائيًا من مجموعة الفئات المختارة فقط
+  const shuffledPool = [...pool];
+  for(let i=shuffledPool.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [shuffledPool[i],shuffledPool[j]]=[shuffledPool[j],shuffledPool[i]]; }
+  const questionIds = shuffledPool.slice(0, count);
   roomRef(state.roomCode).update({
     status:'question', currentIndex:0, questionStart:Date.now(),
     duration:dur, correctIndex:null, questionIds
   });
+}
+function toggleCategory(cat){
+  const i = state.selectedCats.indexOf(cat);
+  if(i>-1) state.selectedCats.splice(i,1); else state.selectedCats.push(cat);
+  render();
 }
 let nextTimeout = null;
 function revealAnswer(){
@@ -496,7 +508,7 @@ function render(){
           </div>
           <div>
             <h3 style="font-size:16px; color:var(--yellow);">٤) التحكم بالمسابقة قبل البدء</h3>
-            <p class="muted">بغرفة انتظار المضيف يقدر يحدد <b>عدد الأسئلة</b> (من 1 إلى 100، تُسحب عشوائيًا من بنك أسئلة يغطي: ثقافة عامة، دينية، مفردات إنجليزية، تاريخ، وجغرافيا)، وكمان يحدد <b>الوقت المتاح لكل سؤال</b> (من 8 إلى 30 ثانية) قبل ما يضغط "ابدأ اللعبة".</p>
+            <p class="muted">بغرفة انتظار المضيف يقدر يختار <b>فئة أو أكثر</b> من فئات الأسئلة (ثقافة عامة، دينية، مفردات إنجليزية، تاريخ، جغرافيا) — مثلاً يخلي المسابقة دينية فقط أو مفردات إنجليزية فقط، ويحدد <b>عدد الأسئلة</b> (تُسحب عشوائيًا من ضمن الفئات اللي اخترتها بس)، وكمان <b>الوقت المتاح لكل سؤال</b> (من 8 إلى 30 ثانية) قبل ما يضغط "ابدأ اللعبة".</p>
           </div>
           <div>
             <h3 style="font-size:16px; color:var(--yellow);">٥) طريقة اللعب والنقاط</h3>
@@ -585,7 +597,15 @@ function render(){
                 <span class="badge-live"><span class="dot"></span>متصل</span>
               </div>`).join('') + `</div>`}
           <div class="stack" style="border-top:1px solid var(--line); padding-top:14px;">
-            <label class="muted" style="font-size:13px;">عدد الأسئلة (المتوفر: ${QUESTIONS.length})</label>
+            <label class="muted" style="font-size:13px;">فئات الأسئلة (اختر وحدة أو أكثر)</label>
+            <div class="row" style="flex-wrap:wrap;">
+              ${CATEGORIES.map(cat => {
+                const on = state.selectedCats.includes(cat);
+                const count = QUESTIONS.filter(q=>q.cat===cat).length;
+                return `<span onclick="toggleCategory('${cat}')" class="pill" style="cursor:pointer; user-select:none; border:1.5px solid ${on?'var(--yellow)':'var(--line)'}; color:${on?'var(--yellow)':'var(--muted)'}; background:${on?'rgba(255,210,63,0.12)':'rgba(255,255,255,0.03)'};">${on?'✓ ':''}${cat} (${count})</span>`;
+              }).join('')}
+            </div>
+            <label class="muted" style="font-size:13px;">عدد الأسئلة (المتوفر ضمن الفئات المختارة: ${QUESTIONS.filter(q=>state.selectedCats.includes(q.cat)).length})</label>
             <input id="numQInput" type="number" min="1" max="${QUESTIONS.length}" value="${state.numQuestionsChoice}" oninput="state.numQuestionsChoice=this.value">
             <label class="muted" style="font-size:13px;">الوقت لكل سؤال</label>
             <select id="durSelect" onchange="state.durationChoice=parseInt(this.value,10)" style="font-family:var(--font-body); font-size:16px; padding:14px 16px; border-radius:12px; border:1.5px solid var(--line); background:rgba(255,255,255,0.04); color:var(--ink); width:100%;">
