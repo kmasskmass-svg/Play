@@ -671,7 +671,7 @@ const state = {
   duration: QUESTION_DURATION, correctIndex:null, myAnswerThisRound:null,
   questionIds: [], numQuestionsChoice: 20, durationChoice: QUESTION_DURATION,
   selectedCats: [...CATEGORIES],
-  selectedDiffs: [1,2,3],
+  selectedDiffs: [1,2,3], fastestId:null,
   screen:'instructions', lastStatus:null, lastIndex:null,
   pvpMode:false, pvpAsker:null, pvpTarget:null, paused:false,
 };
@@ -720,6 +720,7 @@ function handleRoomSnapshot(room){
   if(room.pvpMode !== undefined) state.pvpMode = room.pvpMode;
   state.pvpAsker = room.pvpAsker || null;
   state.pvpTarget = room.pvpTarget || null;
+  state.fastestId = room.fastestId || null;
   const pausedChanged = !!room.paused !== !!state.paused;
   state.paused = !!room.paused;
   if(pausedChanged){
@@ -780,10 +781,28 @@ function onStatusChange(status){
     if(status==='lobby') state.screen='player-lobby';
     if(status==='picking') state.screen='player-picking-wait';
     if(status==='question'){ state.screen='player-question'; startPlayerTimer(state.duration); }
-    if(status==='reveal') state.screen='player-reveal';
+    if(status==='reveal'){
+      state.screen='player-reveal';
+      const q = getQuestion(state.currentIndex);
+      if(q && state.myAnswerThisRound !== null) playTone(state.myAnswerThisRound === q.correct);
+    }
     if(status==='end') state.screen='end';
   }
   render();
+}
+function playTone(isCorrect){
+  try{
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator();
+    const g = ctx.createGain();
+    o.type = 'sine';
+    o.frequency.value = isCorrect ? 880 : 220;
+    g.gain.value = 0.15;
+    o.connect(g); g.connect(ctx.destination);
+    o.start();
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.35);
+    o.stop(ctx.currentTime + 0.35);
+  }catch(e){}
 }
 
 /* ================== منطق المضيف (Host) ================== */
@@ -792,7 +811,7 @@ function createRoom(name, customCode){
   state.playerName = name;
   state.roomCode = customCode || genCode();
   const initialPlayers = {};
-  initialPlayers[state.myId] = { name, score:0 };
+  initialPlayers[state.myId] = { name, score:0, streak:0 };
   roomRef(state.roomCode).set({ status:'lobby', currentIndex:-1, players:initialPlayers, createdAt: Date.now() });
   attachRoomListener();
   saveSession();
@@ -813,7 +832,7 @@ function startGame(){
   const questionIds = shuffledPool.slice(0, count);
   roomRef(state.roomCode).update({
     status: state.pvpMode ? 'picking' : 'question', currentIndex:0, questionStart:Date.now(),
-    duration:dur, correctIndex:null, questionIds, pvpMode: !!state.pvpMode, pvpAsker:null, pvpTarget:null
+    duration:dur, correctIndex:null, questionIds, pvpMode: !!state.pvpMode, pvpAsker:null, pvpTarget:null, fastestId:null
   });
 }
 function togglePvpMode(){ state.pvpMode = !state.pvpMode; render(); }
@@ -878,18 +897,24 @@ function revealAnswer(){
   const q = getQuestion(state.currentIndex);
   const answers = state.answers[state.currentIndex] || {};
   const updatedPlayers = {...state.players};
+  let fastestId = null, fastestTime = Infinity;
   for(const id in answers){
     if(!updatedPlayers[id]) continue;
     const a = answers[id];
     if(a.choice === q.correct){
       const elapsed = a.time - state.questionStart;
+      if(elapsed < fastestTime){ fastestTime = elapsed; fastestId = id; }
       const speedFactor = Math.max(0, 1 - elapsed/state.duration);
       const base = DIFF_POINTS[q.diff] || 1000;
-      const points = Math.round(base/2 + (base/2)*speedFactor);
-      updatedPlayers[id] = {...updatedPlayers[id], score:(updatedPlayers[id].score||0)+points};
+      const streak = (updatedPlayers[id].streak||0) + 1;
+      const streakBonus = streak >= 2 ? Math.min(streak-1, 5) * 50 : 0;
+      const points = Math.round(base/2 + (base/2)*speedFactor) + streakBonus;
+      updatedPlayers[id] = {...updatedPlayers[id], score:(updatedPlayers[id].score||0)+points, streak};
+    } else {
+      updatedPlayers[id] = {...updatedPlayers[id], streak:0};
     }
   }
-  roomRef(state.roomCode).update({ status:'reveal', correctIndex:q.correct, players:updatedPlayers });
+  roomRef(state.roomCode).update({ status:'reveal', correctIndex:q.correct, players:updatedPlayers, fastestId: fastestId || null });
   clearTimeout(nextTimeout);
   nextTimeout = setTimeout(nextQuestion, REVEAL_DURATION);
 }
@@ -929,9 +954,9 @@ function nextQuestion(){
   if(nextIndex >= totalQuestions()){
     roomRef(state.roomCode).update({ status:'end' });
   } else if(state.pvpMode){
-    roomRef(state.roomCode).update({ status:'picking', currentIndex:nextIndex, pvpAsker:null, pvpTarget:null, correctIndex:null });
+    roomRef(state.roomCode).update({ status:'picking', currentIndex:nextIndex, pvpAsker:null, pvpTarget:null, correctIndex:null, fastestId:null });
   } else {
-    roomRef(state.roomCode).update({ status:'question', currentIndex:nextIndex, questionStart:Date.now(), duration:state.duration, correctIndex:null });
+    roomRef(state.roomCode).update({ status:'question', currentIndex:nextIndex, questionStart:Date.now(), duration:state.duration, correctIndex:null, fastestId:null });
   }
 }
 function randomPickPlayers(){
@@ -959,7 +984,7 @@ function joinRoom(name, code){
   state.role='player';
   state.playerName=name;
   state.roomCode=code.toUpperCase();
-  roomRef(state.roomCode).child('players').child(state.myId).set({ name, score:0 })
+  roomRef(state.roomCode).child('players').child(state.myId).set({ name, score:0, streak:0 })
     .then(() => { attachRoomListener(); saveSession(); })
     .catch(err => {
       state.screen='join-form';
@@ -971,6 +996,7 @@ function submitAnswer(choiceIndex){
   if(state.myAnswerThisRound !== null) return;
   if(state.pvpMode && state.pvpTarget && state.myId !== state.pvpTarget) return;
   state.myAnswerThisRound = choiceIndex;
+  if(navigator.vibrate) navigator.vibrate(40);
   render();
   roomRef(state.roomCode).child('answers').child(state.currentIndex).child(state.myId).set({ choice:choiceIndex, time:Date.now() });
 }
@@ -981,7 +1007,11 @@ function startHostTimer(duration, onDone){
   const start = state.questionStart;
   const bar = () => {
     const el = document.getElementById('timerFill');
-    if(el){ const pct = Math.max(0, 1-(Date.now()-start)/duration); el.style.width = (pct*100)+'%'; }
+    if(el){
+      const pct = Math.max(0, 1-(Date.now()-start)/duration);
+      el.style.width = (pct*100)+'%';
+      el.style.background = pct>0.5 ? 'linear-gradient(90deg, var(--teal), var(--yellow))' : (pct>0.2 ? '#ffb020' : '#ff4d4f');
+    }
     if(Date.now()-start < duration){ timerRAF = requestAnimationFrame(bar); } else { onDone(); }
   };
   timerRAF = requestAnimationFrame(bar);
@@ -991,7 +1021,11 @@ function startPlayerTimer(duration){
   const start = state.questionStart;
   const bar = () => {
     const el = document.getElementById('timerFill');
-    if(el){ const pct = Math.max(0, 1-(Date.now()-start)/duration); el.style.width = (pct*100)+'%'; }
+    if(el){
+      const pct = Math.max(0, 1-(Date.now()-start)/duration);
+      el.style.width = (pct*100)+'%';
+      el.style.background = pct>0.5 ? 'linear-gradient(90deg, var(--teal), var(--yellow))' : (pct>0.2 ? '#ffb020' : '#ff4d4f');
+    }
     if(Date.now()-start < duration){ timerRAF = requestAnimationFrame(bar); }
   };
   timerRAF = requestAnimationFrame(bar);
@@ -1328,12 +1362,13 @@ function render(){
         <div class="card stack">
           <div class="stack">${q.options.map((opt,i) => `<div class="opt ${i===q.correct?'correct':''}">${opt}</div>`).join('')}</div>
         </div>
+        ${state.fastestId && state.players[state.fastestId] ? `<div class="pill" style="text-align:center;">⚡ ${state.players[state.fastestId].name} أول من جاوب صح!</div>` : ''}
         <div class="card stack">
           <h3>الترتيب الحالي</h3>
           <div class="stack" style="max-height:360px; overflow-y:auto;">
           ${players.map(([id,p],i) => `
             <div class="score-row">
-              <span class="row" style="align-items:center; gap:10px;"><span class="rank">${i+1}</span>${p.name}${id===state.myId?' (أنت)':''}</span>
+              <span class="row" style="align-items:center; gap:10px;"><span class="rank">${i+1}</span>${p.name}${id===state.myId?' (أنت)':''}${(p.streak||0)>=2?` <span style="color:#ff8a3d;">🔥×${p.streak}</span>`:''}</span>
               <span>${p.score||0}</span>
             </div>`).join('')}
           </div>
@@ -1374,12 +1409,13 @@ function render(){
           <div class="muted">نقاطك حتى الآن</div>
           <div class="big-score">${mine ? mine.score : 0}</div>
         </div>
+        ${state.fastestId && state.players[state.fastestId] ? `<div class="pill" style="text-align:center;">⚡ ${state.players[state.fastestId].name} أول من جاوب صح!</div>` : ''}
         <div class="card stack">
           <h3>الترتيب</h3>
           <div class="stack" style="max-height:360px; overflow-y:auto;">
           ${players.map(([id,p],i) => `
             <div class="score-row">
-              <span class="row" style="align-items:center; gap:10px;"><span class="rank">${i+1}</span>${p.name}</span>
+              <span class="row" style="align-items:center; gap:10px;"><span class="rank">${i+1}</span>${p.name}${(p.streak||0)>=2?` <span style="color:#ff8a3d;">🔥×${p.streak}</span>`:''}</span>
               <span>${p.score||0}</span>
             </div>`).join('')}
           </div>
@@ -1392,15 +1428,16 @@ function render(){
     const players = sortedPlayers();
     html = `
       <div class="stack">
+        <div id="confettiLayer" style="position:fixed; inset:0; pointer-events:none; overflow:hidden; z-index:50;"></div>
         <div class="eyebrow">انتهت المسابقة</div>
         <h1 style="font-size:28px;">🏆 النتائج النهائية</h1>
         <div class="card stack">
           <div class="stack" style="max-height:420px; overflow-y:auto;">
           ${players.map(([id,p],i) => `
-            <div class="score-row">
+            <div class="score-row" style="${i===0?'background:rgba(255,210,63,0.12); border-radius:12px; padding:8px 10px;':''}">
               <span class="row" style="align-items:center; gap:10px;">
-                <span class="rank">${i+1}</span>
-                <span class="avatar" style="background:${avatarColor(id)}">${initials(p.name)}</span>${p.name}
+                <span class="rank">${i===0?'👑':i+1}</span>
+                <span class="avatar" style="background:${avatarColor(id)}">${initials(p.name)}</span>${p.name}${i===0?' <b>(الفائز)</b>':''}
               </span>
               <span>${p.score||0}</span>
             </div>`).join('')}
@@ -1412,6 +1449,36 @@ function render(){
   }
 
   app.innerHTML = html;
+  if(state.screen === 'end' && !state._confettiDone){
+    state._confettiDone = true;
+    spawnConfetti();
+  }
+}
+function spawnConfetti(){
+  const layer = document.getElementById('confettiLayer');
+  if(!layer) return;
+  const colors = ['#ffd23f','#ff6b6b','#4ecdc4','#a78bfa','#5eead4'];
+  for(let i=0;i<60;i++){
+    const el = document.createElement('div');
+    const size = 6 + Math.random()*6;
+    el.style.position='absolute';
+    el.style.left = Math.random()*100+'%';
+    el.style.top = '-20px';
+    el.style.width = size+'px';
+    el.style.height = size*1.6+'px';
+    el.style.background = colors[Math.floor(Math.random()*colors.length)];
+    el.style.opacity = '0.9';
+    el.style.borderRadius = '2px';
+    el.style.transform = `rotate(${Math.random()*360}deg)`;
+    el.style.transition = `transform ${2.5+Math.random()*1.5}s linear, top ${2.5+Math.random()*1.5}s linear, opacity 0.4s linear ${2+Math.random()}s`;
+    layer.appendChild(el);
+    requestAnimationFrame(() => {
+      el.style.top = (100+Math.random()*10)+'%';
+      el.style.transform = `rotate(${720+Math.random()*360}deg)`;
+      el.style.opacity = '0';
+    });
+    setTimeout(() => el.remove(), 4500);
+  }
 }
 
 function showHostForm(){ state.hostError=null; state.screen='host-name-form'; render(); }
