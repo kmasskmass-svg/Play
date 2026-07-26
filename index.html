@@ -382,6 +382,7 @@ const state = {
   questionIds: [], numQuestionsChoice: 20, durationChoice: QUESTION_DURATION,
   selectedCats: [...CATEGORIES],
   screen:'instructions', lastStatus:null, lastIndex:null,
+  pvpMode:false, pvpAsker:null, pvpTarget:null, paused:false,
 };
 const app = document.getElementById('app');
 let timerRAF = null;
@@ -406,6 +407,12 @@ function shuffledIndices(n, count){
   return arr.slice(0, count);
 }
 function totalQuestions(){ return (state.questionIds && state.questionIds.length) || QUESTIONS.length; }
+function hostControlsHtml(){
+  return `<div class="row" style="justify-content:flex-end; gap:8px;">
+    <span onclick="pauseGame()" class="pill" style="cursor:pointer; user-select:none;">⏸ إيقاف مؤقت</span>
+    <span onclick="endGameNow()" class="pill" style="cursor:pointer; user-select:none; color:var(--pink); border-color:var(--pink);">⏹ إنهاء اللعبة</span>
+  </div>`;
+}
 function getQuestion(index){
   if(state.questionIds && state.questionIds.length) return QUESTIONS[state.questionIds[index]];
   return QUESTIONS[index];
@@ -419,6 +426,43 @@ function handleRoomSnapshot(room){
   if(!room) return;
   state.players = room.players || {};
   state.answers = room.answers || {};
+  if(room.pvpMode !== undefined) state.pvpMode = room.pvpMode;
+  state.pvpAsker = room.pvpAsker || null;
+  state.pvpTarget = room.pvpTarget || null;
+  const pausedChanged = !!room.paused !== !!state.paused;
+  state.paused = !!room.paused;
+  if(pausedChanged){
+    cancelAnimationFrame(timerRAF);
+    clearTimeout(nextTimeout);
+    if(state.paused){
+      state.screen = state.role==='host' ? 'host-paused' : 'player-paused';
+      render();
+      return;
+    } else {
+      state.currentIndex = room.currentIndex;
+      state.correctIndex = room.correctIndex;
+      if(room.questionIds) state.questionIds = room.questionIds;
+      state.lastStatus = room.status;
+      state.lastIndex = room.currentIndex;
+      if(room.status==='question'){
+        state.questionStart = room.questionStart;
+        state.duration = room.duration || QUESTION_DURATION;
+        state.screen = state.role==='host' ? 'host-question' : 'player-question';
+        if(state.role==='host') startHostTimer(state.duration, revealAnswer); else startPlayerTimer(state.duration);
+      } else if(room.status==='reveal'){
+        state.screen = state.role==='host' ? 'host-reveal' : 'player-reveal';
+        if(state.role==='host') nextTimeout = setTimeout(nextQuestion, REVEAL_DURATION);
+      } else if(room.status==='picking'){
+        state.screen = state.role==='host' ? 'host-picking' : 'player-picking-wait';
+      } else if(room.status==='lobby'){
+        state.screen = state.role==='host' ? 'host-lobby' : 'player-lobby';
+      } else if(room.status==='end'){
+        state.screen = 'end';
+      }
+      render();
+      return;
+    }
+  }
   const statusChanged = room.status !== state.lastStatus || room.currentIndex !== state.lastIndex;
   if(statusChanged){
     state.lastStatus = room.status;
@@ -437,11 +481,13 @@ function handleRoomSnapshot(room){
 function onStatusChange(status){
   if(state.role === 'host'){
     if(status==='lobby') state.screen='host-lobby';
+    if(status==='picking') state.screen='host-picking';
     if(status==='question'){ state.screen='host-question'; startHostTimer(state.duration, revealAnswer); }
     if(status==='reveal') state.screen='host-reveal';
     if(status==='end') state.screen='end';
   } else {
     if(status==='lobby') state.screen='player-lobby';
+    if(status==='picking') state.screen='player-picking-wait';
     if(status==='question'){ state.screen='player-question'; startPlayerTimer(state.duration); }
     if(status==='reveal') state.screen='player-reveal';
     if(status==='end') state.screen='end';
@@ -474,10 +520,11 @@ function startGame(){
   for(let i=shuffledPool.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [shuffledPool[i],shuffledPool[j]]=[shuffledPool[j],shuffledPool[i]]; }
   const questionIds = shuffledPool.slice(0, count);
   roomRef(state.roomCode).update({
-    status:'question', currentIndex:0, questionStart:Date.now(),
-    duration:dur, correctIndex:null, questionIds
+    status: state.pvpMode ? 'picking' : 'question', currentIndex:0, questionStart:Date.now(),
+    duration:dur, correctIndex:null, questionIds, pvpMode: !!state.pvpMode, pvpAsker:null, pvpTarget:null
   });
 }
+function togglePvpMode(){ state.pvpMode = !state.pvpMode; render(); }
 function toggleCategory(cat){
   const i = state.selectedCats.indexOf(cat);
   if(i>-1) state.selectedCats.splice(i,1); else state.selectedCats.push(cat);
@@ -506,13 +553,61 @@ function goToNextNow(){
   clearTimeout(nextTimeout);
   nextQuestion();
 }
+function pauseGame(){
+  cancelAnimationFrame(timerRAF);
+  clearTimeout(nextTimeout);
+  const updates = { paused:true };
+  if(state.lastStatus==='question' && state.questionStart){
+    updates.pausedRemaining = Math.max(0, state.duration - (Date.now()-state.questionStart));
+  }
+  roomRef(state.roomCode).update(updates);
+}
+function resumeGame(){
+  roomRef(state.roomCode).once('value').then(snap => {
+    const room = snap.val();
+    if(!room) return;
+    const updates = { paused:false };
+    if(room.status==='question'){
+      updates.questionStart = Date.now();
+      updates.duration = (room.pausedRemaining!=null && room.pausedRemaining>0) ? room.pausedRemaining : (room.duration||QUESTION_DURATION);
+    }
+    roomRef(state.roomCode).update(updates);
+  });
+}
+function endGameNow(){
+  if(!confirm('متأكد إنك تبغى تنهي اللعبة الآن؟ رح تظهر النتائج النهائية بالنقاط الحالية.')) return;
+  cancelAnimationFrame(timerRAF);
+  clearTimeout(nextTimeout);
+  roomRef(state.roomCode).update({ status:'end', paused:false });
+}
 function nextQuestion(){
   const nextIndex = state.currentIndex + 1;
   if(nextIndex >= totalQuestions()){
     roomRef(state.roomCode).update({ status:'end' });
+  } else if(state.pvpMode){
+    roomRef(state.roomCode).update({ status:'picking', currentIndex:nextIndex, pvpAsker:null, pvpTarget:null, correctIndex:null });
   } else {
     roomRef(state.roomCode).update({ status:'question', currentIndex:nextIndex, questionStart:Date.now(), duration:state.duration, correctIndex:null });
   }
+}
+function randomPickPlayers(){
+  const ids = Object.keys(state.players);
+  if(ids.length < 2){ alert('لازم لاعبين اثنين على الأقل لتفعيل هذا الوضع.'); return; }
+  let asker = ids[Math.floor(Math.random()*ids.length)];
+  let target;
+  do{ target = ids[Math.floor(Math.random()*ids.length)]; } while(target===asker);
+  const askerSel = document.getElementById('askerSelect');
+  const targetSel = document.getElementById('targetSelect');
+  if(askerSel) askerSel.value = asker;
+  if(targetSel) targetSel.value = target;
+}
+function confirmPickAndStart(){
+  const ids = Object.keys(state.players);
+  if(ids.length < 2){ alert('لازم لاعبين اثنين على الأقل لتفعيل هذا الوضع.'); return; }
+  const asker = document.getElementById('askerSelect').value;
+  const target = document.getElementById('targetSelect').value;
+  if(!asker || !target || asker===target){ alert('اختر لاعبين مختلفين للسؤال والجواب.'); return; }
+  roomRef(state.roomCode).update({ status:'question', questionStart:Date.now(), duration:state.duration, correctIndex:null, pvpAsker:asker, pvpTarget:target });
 }
 
 /* ================== منطق اللاعب (Player) ================== */
@@ -530,6 +625,7 @@ function joinRoom(name, code){
 }
 function submitAnswer(choiceIndex){
   if(state.myAnswerThisRound !== null) return;
+  if(state.pvpMode && state.pvpTarget && state.myId !== state.pvpTarget) return;
   state.myAnswerThisRound = choiceIndex;
   render();
   roomRef(state.roomCode).child('answers').child(state.currentIndex).child(state.myId).set({ choice:choiceIndex, time:Date.now() });
@@ -706,6 +802,11 @@ function render(){
               <option value="20000" ${state.durationChoice==20000?'selected':''}>20 ثانية</option>
               <option value="30000" ${state.durationChoice==30000?'selected':''}>30 ثانية</option>
             </select>
+            <div class="row" style="justify-content:space-between; align-items:center; background:rgba(255,255,255,0.04); border-radius:12px; padding:12px 14px; margin-top:4px;">
+              <span style="font-size:14px;">🎯 وضع: سؤال من لاعب لآخر</span>
+              <span onclick="togglePvpMode()" class="pill" style="cursor:pointer; user-select:none; border:1.5px solid ${state.pvpMode?'var(--yellow)':'var(--line)'}; color:${state.pvpMode?'var(--yellow)':'var(--muted)'};">${state.pvpMode?'✓ مفعّل':'غير مفعّل'}</span>
+            </div>
+            ${state.pvpMode ? '<p class="muted" style="font-size:12.5px; margin:0;">قبل كل سؤال بتختار (أو تسحب عشوائيًا) لاعب يسأل ولاعب يجاوب — باقي اللاعبين يتفرجون بس.</p>' : ''}
           </div>
           <button class="btn-primary btn-block ${players.length===0?'btn-disabled':''}" ${players.length===0?'disabled':''} onclick="startGame()">ابدأ اللعبة</button>
         </div>
@@ -733,17 +834,106 @@ function render(){
       </div>`;
   }
 
+  else if(state.screen === 'host-picking'){
+    const players = sortedPlayers();
+    html = `
+      <div class="stack">
+        ${hostControlsHtml()}
+        <span class="pill">تجهيز السؤال ${state.currentIndex+1} / ${totalQuestions()}</span>
+        <div class="card stack">
+          <h2 style="font-size:20px;">🎯 اختر مين يسأل ومين يجاوب</h2>
+          <label class="muted" style="font-size:13px;">اللاعب السائل</label>
+          <select id="askerSelect">
+            <option value="">اختر لاعب</option>
+            ${players.map(([id,p]) => `<option value="${id}">${p.name}</option>`).join('')}
+          </select>
+          <label class="muted" style="font-size:13px;">اللاعب المجاوب</label>
+          <select id="targetSelect">
+            <option value="">اختر لاعب</option>
+            ${players.map(([id,p]) => `<option value="${id}">${p.name}</option>`).join('')}
+          </select>
+          <button class="btn-secondary btn-block" onclick="randomPickPlayers()">🎲 اختيار عشوائي</button>
+          <button class="btn-primary btn-block" onclick="confirmPickAndStart()">ابدأ السؤال ▶</button>
+        </div>
+        <p class="muted" style="text-align:center;">باقي اللاعبين بيتفرجون على هذا السؤال بس.</p>
+      </div>`;
+  }
+
+  else if(state.screen === 'player-picking-wait'){
+    html = `
+      <div class="stack">
+        <div class="card stack" style="text-align:center;">
+          <h2 style="font-size:20px;">🎯 السؤال الجاي بين لاعبين</h2>
+          <p class="muted">المضيف يختار الآن مين يسأل ومين يجاوب…</p>
+        </div>
+      </div>`;
+  }
+
+  else if(state.screen === 'host-paused'){
+    const players = sortedPlayers();
+    html = `
+      <div class="stack">
+        <div class="card stack" style="text-align:center;">
+          <div class="eyebrow">⏸ اللعبة متوقفة مؤقتًا</div>
+          <h2 style="font-size:22px;">وقّفت اللعبة — اللاعبون بانتظارك</h2>
+        </div>
+        <div class="card stack">
+          <h3>الترتيب الحالي</h3>
+          <div class="stack" style="max-height:300px; overflow-y:auto;">
+          ${players.map(([id,p],i) => `
+            <div class="score-row">
+              <span class="row" style="align-items:center; gap:10px;"><span class="rank">${i+1}</span>${p.name}${id===state.myId?' (أنت)':''}</span>
+              <span>${p.score||0}</span>
+            </div>`).join('')}
+          </div>
+        </div>
+        <button class="btn-primary btn-block" onclick="resumeGame()">▶️ استئناف اللعبة</button>
+        <button class="btn-secondary btn-block" style="color:var(--pink); border-color:var(--pink);" onclick="endGameNow()">⏹ إنهاء اللعبة نهائيًا</button>
+      </div>`;
+  }
+
+  else if(state.screen === 'player-paused'){
+    const players = sortedPlayers();
+    const mine = state.players[state.myId];
+    html = `
+      <div class="stack">
+        <div class="card stack" style="text-align:center;">
+          <div class="eyebrow">⏸ اللعبة متوقفة مؤقتًا</div>
+          <h2 style="font-size:20px;">المضيف وقّف اللعبة مؤقتًا</h2>
+          <p class="muted">استنى شوي، بترجع اللعبة بمجرد ما يستأنفها المضيف.</p>
+        </div>
+        <div class="card stack" style="text-align:center;">
+          <div class="muted">نقاطك حتى الآن</div>
+          <div class="big-score">${mine ? mine.score : 0}</div>
+        </div>
+        <div class="card stack">
+          <h3>الترتيب الحالي</h3>
+          <div class="stack" style="max-height:300px; overflow-y:auto;">
+          ${players.map(([id,p],i) => `
+            <div class="score-row">
+              <span class="row" style="align-items:center; gap:10px;"><span class="rank">${i+1}</span>${p.name}${id===state.myId?' (أنت)':''}</span>
+              <span>${p.score||0}</span>
+            </div>`).join('')}
+          </div>
+        </div>
+      </div>`;
+  }
+
   else if(state.screen === 'host-question'){
     const q = getQuestion(state.currentIndex);
     const total = Object.keys(state.players).length;
     const answered = Object.keys(state.answers[state.currentIndex] || {}).length;
     const myAnswered = state.myAnswerThisRound !== null;
+    const askerName = state.pvpAsker ? ((state.players[state.pvpAsker]||{}).name || '؟') : null;
+    const targetName = state.pvpTarget ? ((state.players[state.pvpTarget]||{}).name || '؟') : null;
     html = `
       <div class="stack">
+        ${hostControlsHtml()}
         <div class="row" style="justify-content:space-between;">
           <span class="pill">سؤال ${state.currentIndex+1} / ${totalQuestions()} · ${q.cat||''}</span>
-          <span class="pill">${answered} / ${total} أجابوا</span>
+          <span class="pill">${answered} / ${state.pvpMode&&state.pvpTarget?1:total} أجابوا</span>
         </div>
+        ${state.pvpMode && targetName ? `<div class="pill" style="text-align:center;">🎯 ${askerName} يسأل ${targetName}</div>` : ''}
         <div class="timerbar-track"><div class="timerbar-fill" id="timerFill" style="width:100%"></div></div>
         <div class="card stack">
           <h2 style="font-size:22px; line-height:1.5;">${q.q}</h2>
@@ -763,6 +953,7 @@ function render(){
     const mine = state.players[state.myId];
     html = `
       <div class="stack">
+        ${hostControlsHtml()}
         <div class="card stack" style="text-align:center;">
           <div class="muted">نقاطك حتى الآن</div>
           <div class="big-score">${mine ? mine.score : 0}</div>
@@ -788,19 +979,23 @@ function render(){
   else if(state.screen === 'player-question'){
     const q = getQuestion(state.currentIndex);
     const answered = state.myAnswerThisRound !== null;
+    const isSpectator = state.pvpMode && state.pvpTarget && state.myId !== state.pvpTarget;
+    const askerName = state.pvpAsker ? ((state.players[state.pvpAsker]||{}).name || '؟') : null;
+    const targetName = state.pvpTarget ? ((state.players[state.pvpTarget]||{}).name || '؟') : null;
     html = `
       <div class="stack">
         <span class="pill">سؤال ${state.currentIndex+1} / ${totalQuestions()} · ${q.cat||''}</span>
+        ${state.pvpMode && targetName ? `<div class="pill" style="text-align:center;">🎯 ${askerName} يسأل ${targetName}${state.myId===state.pvpTarget?' (أنت)':''}</div>` : ''}
         <div class="timerbar-track"><div class="timerbar-fill" id="timerFill" style="width:100%"></div></div>
         <div class="card stack">
           <h2 style="font-size:20px; line-height:1.5;">${q.q}</h2>
           <div class="stack">
             ${q.options.map((opt,i) => `
-              <button class="opt ${answered && i===state.myAnswerThisRound ? 'correct' : ''}" ${answered?'disabled':''}
+              <button class="opt ${answered && i===state.myAnswerThisRound ? 'correct' : ''}" ${(answered||isSpectator)?'disabled':''}
                 onclick="submitAnswer(${i})">${opt}</button>`).join('')}
           </div>
         </div>
-        ${answered ? '<p class="muted" style="text-align:center;">تم إرسال إجابتك، بانتظار البقية…</p>' : ''}
+        ${isSpectator ? `<p class="muted" style="text-align:center;">انت تتفرج هالجولة — ${targetName} هو من يجاوب.</p>` : (answered ? '<p class="muted" style="text-align:center;">تم إرسال إجابتك، بانتظار البقية…</p>' : '')}
       </div>`;
   }
 
@@ -845,6 +1040,7 @@ function render(){
             </div>`).join('')}
           </div>
         </div>
+        <button class="btn-primary btn-block" onclick="exportResults()">⬇️ تصدير النتائج (نص)</button>
         <button class="btn-secondary btn-block" onclick="clearSession(); location.reload()">جولة جديدة</button>
       </div>`;
   }
@@ -853,6 +1049,54 @@ function render(){
 }
 
 function showHostForm(){ state.hostError=null; state.screen='host-name-form'; render(); }
+function exportResults(){
+  const lines = [];
+  lines.push('نتائج مسابقة جمان');
+  lines.push('كود الغرفة: ' + (state.roomCode || '—'));
+  lines.push('التاريخ: ' + new Date().toLocaleString('ar'));
+  lines.push('');
+  lines.push('=== الترتيب النهائي ===');
+  const players = sortedPlayers();
+  players.forEach(([id,p], i) => {
+    lines.push((i+1) + '. ' + p.name + ' — ' + (p.score||0) + ' نقطة');
+  });
+  lines.push('');
+  lines.push('=== الأسئلة والإجابات ===');
+  const total = totalQuestions();
+  for(let idx=0; idx<total; idx++){
+    const q = getQuestion(idx);
+    if(!q) continue;
+    lines.push('');
+    lines.push((idx+1) + '. [' + (q.cat||'') + '] ' + q.q);
+    q.options.forEach((opt,i) => {
+      lines.push('    ' + (i===q.correct ? '✔ ' : '- ') + opt);
+    });
+    const roundAnswers = state.answers[idx] || {};
+    const answerLines = Object.keys(roundAnswers).map(pid => {
+      const pName = (state.players[pid] || {}).name || 'لاعب محذوف';
+      const a = roundAnswers[pid];
+      const choiceText = (q.options[a.choice] !== undefined) ? q.options[a.choice] : '؟';
+      const correct = a.choice === q.correct ? 'صحيح ✔' : 'خطأ ✘';
+      return '      • ' + pName + ': ' + choiceText + ' (' + correct + ')';
+    });
+    if(answerLines.length){
+      lines.push('    إجابات اللاعبين:');
+      lines.push(...answerLines);
+    } else {
+      lines.push('    (ما حد جاوب هالسؤال)');
+    }
+  }
+  const content = '\uFEFF' + lines.join('\n');
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'نتائج-جمان-' + (state.roomCode || 'game') + '.txt';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
 function handleHostClick(){
   const name = document.getElementById('hostNameInput').value.trim();
   let customCode = document.getElementById('hostCodeInput').value.trim().toUpperCase();
