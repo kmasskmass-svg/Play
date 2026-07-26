@@ -75,6 +75,8 @@ input::placeholder{color:var(--muted);}
 .avatar{width:32px; height:32px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-family:var(--font-display); font-weight:800; font-size:14px; color:#221800;}
 .timerbar-track{height:8px; border-radius:999px; background:rgba(255,255,255,0.08); overflow:hidden;}
 .timerbar-fill{height:100%; background:linear-gradient(90deg, var(--teal), var(--yellow));}
+.spinner{width:42px; height:42px; border:4px solid rgba(255,255,255,0.15); border-top-color:var(--yellow); border-radius:50%; animation:spin 0.8s linear infinite;}
+@keyframes spin{ to{ transform:rotate(360deg); } }
 .opt{text-align:right; border:1.5px solid var(--line); background:rgba(255,255,255,0.03); color:var(--ink); padding:16px 18px; border-radius:14px; font-family:var(--font-body); font-weight:500; font-size:16px; width:100%;}
 .opt:hover{border-color:var(--yellow);}
 .opt.correct{background:rgba(45,212,191,0.18); border-color:var(--teal); color:var(--teal);}
@@ -149,7 +151,7 @@ if(configReady){
 }
 
 /* ================== بيانات المسابقة ==================
-   بنك أسئلة يحتوي 100 سؤال موزعة على 5 فئات:
+   بنك أسئلة يحتوي أكثر من 470 سؤال موزعة على 5 فئات:
    ثقافة عامة / دينية / مفردات إنجليزية / تاريخ / جغرافيا
    لإضافة المزيد لاحقًا: زِد عنصر جديد بنفس الشكل
    { cat:"اسم الفئة", q:"نص السؤال", options:["أ","ب","ج","د"], correct:index }
@@ -685,6 +687,17 @@ function genCode(){
   return c;
 }
 function roomRef(code){ return db.ref('rooms/' + code); }
+function answersRef(code){ return db.ref('answers/' + code); }
+let currentAnswersRef = null;
+function watchCurrentAnswers(index){
+  if(currentAnswersRef) currentAnswersRef.off();
+  state.answers = {};
+  currentAnswersRef = answersRef(state.roomCode).child(index);
+  currentAnswersRef.on('value', snap => {
+    state.answers = { [index]: snap.val() || {} };
+    render();
+  });
+}
 function initials(name){ return (name||'?').trim().slice(0,1).toUpperCase(); }
 function avatarColor(id){
   const colors=['#FFD23F','#FF4D8D','#2DD4BF','#8B7CFF','#FF9F5B'];
@@ -716,7 +729,6 @@ function attachRoomListener(){
 function handleRoomSnapshot(room){
   if(!room) return;
   state.players = room.players || {};
-  state.answers = room.answers || {};
   if(room.pvpMode !== undefined) state.pvpMode = room.pvpMode;
   state.pvpAsker = room.pvpAsker || null;
   state.pvpTarget = room.pvpTarget || null;
@@ -740,7 +752,7 @@ function handleRoomSnapshot(room){
         state.questionStart = room.questionStart;
         state.duration = room.duration || QUESTION_DURATION;
         state.screen = state.role==='host' ? 'host-question' : 'player-question';
-        if(state.role==='host') startHostTimer(state.duration, revealAnswer); else startPlayerTimer(state.duration);
+        if(state.role==='host'){ watchCurrentAnswers(state.currentIndex); startHostTimer(state.duration, revealAnswer); } else startPlayerTimer(state.duration);
       } else if(room.status==='reveal'){
         state.screen = state.role==='host' ? 'host-reveal' : 'player-reveal';
         if(state.role==='host') nextTimeout = setTimeout(nextQuestion, REVEAL_DURATION);
@@ -774,7 +786,7 @@ function onStatusChange(status){
   if(state.role === 'host'){
     if(status==='lobby') state.screen='host-lobby';
     if(status==='picking') state.screen='host-picking';
-    if(status==='question'){ state.screen='host-question'; startHostTimer(state.duration, revealAnswer); }
+    if(status==='question'){ state.screen='host-question'; watchCurrentAnswers(state.currentIndex); startHostTimer(state.duration, revealAnswer); }
     if(status==='reveal') state.screen='host-reveal';
     if(status==='end') state.screen='end';
   } else {
@@ -895,26 +907,29 @@ function toggleDiff(d){
 let nextTimeout = null;
 function revealAnswer(){
   const q = getQuestion(state.currentIndex);
-  const answers = state.answers[state.currentIndex] || {};
-  const updatedPlayers = {...state.players};
-  let fastestId = null, fastestTime = Infinity;
-  for(const id in answers){
-    if(!updatedPlayers[id]) continue;
-    const a = answers[id];
-    if(a.choice === q.correct){
-      const elapsed = a.time - state.questionStart;
-      if(elapsed < fastestTime){ fastestTime = elapsed; fastestId = id; }
-      const speedFactor = Math.max(0, 1 - elapsed/state.duration);
-      const base = DIFF_POINTS[q.diff] || 1000;
-      const streak = (updatedPlayers[id].streak||0) + 1;
-      const streakBonus = streak >= 2 ? Math.min(streak-1, 5) * 50 : 0;
-      const points = Math.round(base/2 + (base/2)*speedFactor) + streakBonus;
-      updatedPlayers[id] = {...updatedPlayers[id], score:(updatedPlayers[id].score||0)+points, streak};
-    } else {
-      updatedPlayers[id] = {...updatedPlayers[id], streak:0};
+  const idx = state.currentIndex;
+  answersRef(state.roomCode).child(idx).once('value').then(snap => {
+    const answers = snap.val() || {};
+    const updatedPlayers = {...state.players};
+    let fastestId = null, fastestTime = Infinity;
+    for(const id in answers){
+      if(!updatedPlayers[id]) continue;
+      const a = answers[id];
+      if(a.choice === q.correct){
+        const elapsed = a.time - state.questionStart;
+        if(elapsed < fastestTime){ fastestTime = elapsed; fastestId = id; }
+        const speedFactor = Math.max(0, 1 - elapsed/state.duration);
+        const base = DIFF_POINTS[q.diff] || 1000;
+        const streak = (updatedPlayers[id].streak||0) + 1;
+        const streakBonus = streak >= 2 ? Math.min(streak-1, 5) * 50 : 0;
+        const points = Math.round(base/2 + (base/2)*speedFactor) + streakBonus;
+        updatedPlayers[id] = {...updatedPlayers[id], score:(updatedPlayers[id].score||0)+points, streak};
+      } else {
+        updatedPlayers[id] = {...updatedPlayers[id], streak:0};
+      }
     }
-  }
-  roomRef(state.roomCode).update({ status:'reveal', correctIndex:q.correct, players:updatedPlayers, fastestId: fastestId || null });
+    roomRef(state.roomCode).update({ status:'reveal', correctIndex:q.correct, players:updatedPlayers, fastestId: fastestId || null });
+  });
   clearTimeout(nextTimeout);
   nextTimeout = setTimeout(nextQuestion, REVEAL_DURATION);
 }
@@ -998,7 +1013,7 @@ function submitAnswer(choiceIndex){
   state.myAnswerThisRound = choiceIndex;
   if(navigator.vibrate) navigator.vibrate(40);
   render();
-  roomRef(state.roomCode).child('answers').child(state.currentIndex).child(state.myId).set({ choice:choiceIndex, time:Date.now() });
+  answersRef(state.roomCode).child(state.currentIndex).child(state.myId).set({ choice:choiceIndex, time:Date.now() });
 }
 
 /* ================== المؤقتات ================== */
@@ -1105,16 +1120,20 @@ function render(){
   else if(state.screen === 'home'){
     html = `
       <div class="stack">
-        <div class="eyebrow">مسابقة جماعية حيّة</div>
-        <h1 style="font-size:30px;">جمان <span style="font-size:16px; color:var(--muted); font-weight:500;">Jumaan</span></h1>
-        <p class="muted" style="margin-top:-8px;">شبّك واجمع نقاط</p>
+        <div style="text-align:center; margin-bottom:6px;">
+          <h1 style="font-size:44px; margin:0; line-height:1.15; letter-spacing:1px;">جمان <span style="color:var(--yellow);">Jumaan</span></h1>
+          <p class="muted" style="font-size:16px; margin:6px 0 2px;">مسابقة ثقافية</p>
+          <p class="muted" style="font-size:12.5px; margin:0; opacity:0.75;">إعداد أبو جمان كليب بن أحمد الزهراني</p>
+        </div>
+        <div class="eyebrow" style="text-align:center;">مسابقة جماعية حيّة</div>
+        <p class="muted" style="text-align:center; margin-top:-8px;">شبّك واجمع نقاط</p>
         <div class="card stack">
           <button class="btn-primary btn-block" onclick="showHostForm()">إنشاء مسابقة والعب فيها</button>
           <button class="btn-secondary btn-block" onclick="showJoinForm()">الانضمام كلاعب فقط</button>
           <button class="btn-secondary btn-block" onclick="printQuestionsPDF(true)">🖨️ طباعة كل الأسئلة (PDF للتثقف)</button>
         </div>
         <p class="muted" style="text-align:center; text-decoration:underline; cursor:pointer;" onclick="state.screen='instructions'; render();">كيف تعمل اللعبة؟ (عرض التعليمات)</p>
-        <p class="footnote">مبني على Firebase Realtime Database — يشتغل بين أي جهازين على الإنترنت. عدد اللاعبين غير محدود، وبنك الأسئلة يحتوي 100 سؤال بخمس فئات (ثقافة عامة، دينية، مفردات إنجليزية، تاريخ، جغرافيا) ويمكن إضافة المزيد لاحقًا من مصفوفة QUESTIONS في الكود.</p>
+        <p class="footnote">مبني على Firebase Realtime Database — يشتغل بين أي جهازين على الإنترنت. عدد اللاعبين غير محدود، وبنك الأسئلة يحتوي أكثر من 470 سؤال بخمس فئات (ثقافة عامة، دينية، مفردات إنجليزية، تاريخ، جغرافيا) ويمكن إضافة المزيد لاحقًا من مصفوفة QUESTIONS في الكود.</p>
       </div>`;
   }
 
@@ -1145,6 +1164,17 @@ function render(){
           ${state.joinError ? `<div class="warn">${state.joinError}</div>` : ''}
           <button class="btn-primary btn-block" onclick="handleJoinClick()">انضمام</button>
           <button class="btn-secondary btn-block" onclick="state.screen='home'; state.joinError=null; render();">رجوع</button>
+        </div>
+      </div>`;
+  }
+
+  else if(state.screen === 'joining'){
+    html = `
+      <div class="stack">
+        <div class="card stack" style="text-align:center; padding:40px 20px;">
+          <div class="spinner" style="margin:0 auto;"></div>
+          <h2 style="font-size:18px; margin-top:12px;">جاري الانضمام للغرفة…</h2>
+          <p class="muted">لحظات وتدخل غرفة الانتظار</p>
         </div>
       </div>`;
   }
@@ -1483,6 +1513,12 @@ function spawnConfetti(){
 
 function showHostForm(){ state.hostError=null; state.screen='host-name-form'; render(); }
 function exportResults(){
+  answersRef(state.roomCode).once('value').then(snap => {
+    const allAnswers = snap.val() || {};
+    buildAndDownloadResults(allAnswers);
+  }).catch(() => buildAndDownloadResults({}));
+}
+function buildAndDownloadResults(allAnswers){
   const lines = [];
   lines.push('نتائج مسابقة جمان');
   lines.push('كود الغرفة: ' + (state.roomCode || '—'));
@@ -1504,7 +1540,7 @@ function exportResults(){
     q.options.forEach((opt,i) => {
       lines.push('    ' + (i===q.correct ? '✔ ' : '- ') + opt);
     });
-    const roundAnswers = state.answers[idx] || {};
+    const roundAnswers = allAnswers[idx] || {};
     const answerLines = Object.keys(roundAnswers).map(pid => {
       const pName = (state.players[pid] || {}).name || 'لاعب محذوف';
       const a = roundAnswers[pid];
@@ -1560,6 +1596,8 @@ function handleJoinClick(){
   if(!name){ state.joinError='لازم تكتب اسمك أولاً.'; render(); return; }
   if(code.length !== 4){ state.joinError='كود الغرفة لازم يكون 4 أحرف بالضبط.'; render(); return; }
   state.joinError = null;
+  state.screen = 'joining';
+  render();
   joinRoom(name, code);
 }
 /* ================== استعادة الجلسة بعد التحديث/الإغلاق ================== */
