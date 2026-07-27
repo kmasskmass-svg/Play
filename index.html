@@ -1116,8 +1116,9 @@ function startGame(){
   let count = parseInt(document.getElementById('numQInput')?.value, 10);
   if(!count || count < 1) count = state.numQuestionsChoice || 20;
   count = Math.max(1, Math.min(pool.length, count));
-  let dur = parseInt(document.getElementById('durSelect')?.value, 10);
-  if(!dur) dur = state.durationChoice || QUESTION_DURATION;
+  let durSec = parseInt(document.getElementById('durSelect')?.value, 10);
+  if(!durSec || durSec < 1) durSec = Math.round((state.durationChoice||QUESTION_DURATION)/1000);
+  const dur = Math.max(1, durSec) * 1000;
 
   if(state.adaptiveMode && !state.kidsMode){
     // يبدأ من مستوى وسط بين مستويات الصعوبة المختارة، ثم يرتفع وينخفض تلقائيًا
@@ -1185,8 +1186,9 @@ function startSolo(){
   let count = parseInt(document.getElementById('soloNumQInput')?.value, 10);
   if(!count || count < 1) count = 10;
   count = Math.max(1, Math.min(pool.length, count));
-  let dur = parseInt(document.getElementById('soloDurSelect')?.value, 10);
-  if(!dur) dur = QUESTION_DURATION;
+  let durSec = parseInt(document.getElementById('soloDurSelect')?.value, 10);
+  if(!durSec || durSec < 1) durSec = 12;
+  const dur = Math.max(1, durSec) * 1000;
 
   state.playerName = name;
   state.soloError = null;
@@ -1723,14 +1725,8 @@ function render(){
           </div>`}
           <label class="muted" style="font-size:13px;">عدد الأسئلة</label>
           <input id="soloNumQInput" type="number" min="1" max="${QUESTIONS.length}" value="10">
-          <label class="muted" style="font-size:13px;">الوقت لكل سؤال</label>
-          <select id="soloDurSelect" style="font-family:var(--font-body); font-size:16px; padding:14px 16px; border-radius:12px; border:1.5px solid var(--line); background:rgba(255,255,255,0.04); color:var(--ink); width:100%;">
-            <option value="8000">8 ثواني</option>
-            <option value="12000" ${state.kidsMode?'':'selected'}>12 ثانية</option>
-            <option value="15000" ${state.kidsMode?'selected':''}>15 ثانية</option>
-            <option value="20000">20 ثانية</option>
-            <option value="30000">30 ثانية</option>
-          </select>
+          <label class="muted" style="font-size:13px;">الوقت لكل سؤال (بالثواني — تقدر تكتب أي رقم من ثانية وحدة)</label>
+          <input id="soloDurSelect" type="number" min="1" max="120" step="1" value="${state.kidsMode?15:12}" style="font-family:var(--font-body); font-size:16px; padding:14px 16px; border-radius:12px; border:1.5px solid var(--line); background:rgba(255,255,255,0.04); color:var(--ink); width:100%;">
           ${state.kidsMode ? '' : `
           <div class="row" style="justify-content:space-between; align-items:center; background:rgba(255,255,255,0.04); border-radius:12px; padding:12px 14px; margin-top:4px;">
             <span style="font-size:14px;">🧠 صعوبة تكيّفية</span>
@@ -1887,14 +1883,8 @@ function render(){
             <label class="muted" style="font-size:13px;">عدد الأسئلة (المتوفر ضمن الفئات والمستويات المختارة: ${state.kidsMode ? kidsPool(state.selectedCats).length : QUESTIONS.filter(q=>state.selectedCats.includes(q.cat) && state.selectedDiffs.includes(q.diff||2)).length})</label>
             <button class="btn-secondary btn-block" onclick="printQuestionsPDF()">🖨️ طباعة أسئلة الفئات المختارة (PDF)</button>
             <input id="numQInput" type="number" min="1" max="${QUESTIONS.length}" value="${state.numQuestionsChoice}" oninput="state.numQuestionsChoice=this.value">
-            <label class="muted" style="font-size:13px;">الوقت لكل سؤال</label>
-            <select id="durSelect" onchange="state.durationChoice=parseInt(this.value,10)" style="font-family:var(--font-body); font-size:16px; padding:14px 16px; border-radius:12px; border:1.5px solid var(--line); background:rgba(255,255,255,0.04); color:var(--ink); width:100%;">
-              <option value="8000" ${state.durationChoice==8000?'selected':''}>8 ثواني</option>
-              <option value="12000" ${state.durationChoice==12000?'selected':''}>12 ثانية</option>
-              <option value="15000" ${state.durationChoice==15000?'selected':''}>15 ثانية</option>
-              <option value="20000" ${state.durationChoice==20000?'selected':''}>20 ثانية</option>
-              <option value="30000" ${state.durationChoice==30000?'selected':''}>30 ثانية</option>
-            </select>
+            <label class="muted" style="font-size:13px;">الوقت لكل سؤال (بالثواني — تقدر تكتب أي رقم من ثانية وحدة)</label>
+            <input id="durSelect" type="number" min="1" max="120" step="1" value="${Math.round((state.durationChoice||QUESTION_DURATION)/1000)}" oninput="state.durationChoice=(parseInt(this.value,10)||1)*1000" style="font-family:var(--font-body); font-size:16px; padding:14px 16px; border-radius:12px; border:1.5px solid var(--line); background:rgba(255,255,255,0.04); color:var(--ink); width:100%;">
             ${state.kidsMode ? '' : `
             <div class="row" style="justify-content:space-between; align-items:center; background:rgba(255,255,255,0.04); border-radius:12px; padding:12px 14px; margin-top:4px;">
               <span style="font-size:14px;">🎯 وضع: سؤال من لاعب لآخر</span>
