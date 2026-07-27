@@ -10,6 +10,7 @@
 <title>جمان | Jumaan</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-app-compat.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-database-compat.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/firebase/10.12.2/firebase-auth-compat.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@600;800;900&family=Tajawal:wght@400;500;700&display=swap');
 
@@ -116,25 +117,33 @@ input::placeholder{color:var(--muted);}
    - من القائمة الجانبية: Build → Realtime Database → Create Database
    - من ⚙️ Project settings → Your apps → Web app (</>) → انسخ كائن الإعدادات وحطه هون بدل القيم تحت
 
-   2) مهم جدًا لتفادي التوقف بعد 30 يوم:
-   عند إنشاء قاعدة البيانات يعرض عليك Firebase خيارين للقواعد (Rules):
-   "Start in test mode" — وهذا الخيار يضع قاعدة تنتهي صلاحيتها تلقائيًا
-   بعد 30 يومًا (مو اللعبة نفسها اللي فيها حد 30 يوم، هذا شرط أمني افتراضي من Firebase).
-   لتفادي هذا نهائيًا: افتح تبويب Rules داخل Realtime Database والصق هذه القواعد
-   الدائمة بدون تاريخ انتهاء (تسمح بالقراءة/الكتابة لأي زائر، وهذا مقبول للعبة بسيطة
-   بدون بيانات حساسة، لكنها لا تصلح لتخزين معلومات خاصة):
+   2) مهم جدًا — الأمان:
+   ⚠️ خطوة إلزامية (مرة واحدة فقط) خارج هذا الملف، لأن قواعد الحماية تُخزَّن على
+   خوادم Firebase وليس داخل الكود، فلا يمكن ضبطها من هنا مهما كتبنا:
+
+   أ) في console.firebase.google.com → Build → Authentication → Sign-in method
+      فعّل "Anonymous" (تسجيل دخول مجهول تلقائي، بدون كلمة مرور ولا بيانات المستخدم).
+
+   ب) في Realtime Database → Rules، الصق هذا بدل القواعد الحالية ثم اضغط Publish:
 
    {
      "rules": {
        ".read": true,
-       ".write": true
+       ".write": "auth != null"
      }
    }
 
-   احفظ (Publish) وسيشتغل بدون أي قيد زمني.
+   بهذا: أي شخص يقدر يشوف النتائج (مناسب لعرض الترتيب للجميع)، لكن الكتابة
+   مقتصرة فقط على من دخل فعليًا عبر هذا الموقع (تسجيل دخول مجهول تلقائي يحصل
+   في الكود تحت، بدون أي تدخل من المستخدم أو اللاعبين). القاعدة لا تنتهي
+   صلاحيتها ولا تحتاج تجديد كل 30 يوم.
+
+   الكود تحت يتكفل تلقائيًا بتسجيل كل متسابق دخولًا مجهولًا فور فتح الصفحة،
+   وينتظر اكتمال ذلك قبل تفعيل القراءة/الكتابة، بحيث يبقى اللعب متزامنًا بين
+   كل المتسابقين في نفس الوقت كما كان يعمل تمامًا.
    ========================================================= */
 const firebaseConfig = {
-  apiKey: "AIzaSyBNdYtzQqyBpYV-HGJ4UpXHQkXS7mcj0nc",
+  apiKey: "AIzaSyATVI8i47qj-f7p6_t_RQ541qY3YGMGyoY",
   authDomain: "letsplay-436d1.firebaseapp.com",
   databaseURL: "https://letsplay-436d1-default-rtdb.asia-southeast1.firebasedatabase.app",
   projectId: "letsplay-436d1",
@@ -144,10 +153,18 @@ const firebaseConfig = {
 };
 
 let db = null;
+let dbReady = false; // يصير true فقط بعد تسجيل الدخول المجهول بنجاح
 const configReady = firebaseConfig.apiKey !== "YOUR_API_KEY";
 if(configReady){
   firebase.initializeApp(firebaseConfig);
   db = firebase.database();
+  // تسجيل دخول مجهول تلقائي لكل زائر — لا يظهر له أي واجهة، يحدث فورًا وبصمت
+  firebase.auth().signInAnonymously().then(function(){
+    dbReady = true;
+    if (typeof window.onFirebaseReady === "function") window.onFirebaseReady();
+  }).catch(function(err){
+    console.error("Firebase anonymous sign-in failed:", err);
+  });
 }
 
 /* ================== بيانات المسابقة ==================
@@ -688,6 +705,13 @@ function genCode(){
 }
 function roomRef(code){ return db.ref('rooms/' + code); }
 function answersRef(code){ return db.ref('answers/' + code); }
+// ينتظر اكتمال تسجيل الدخول المجهول قبل تنفيذ أي كتابة (يحمي من بطء الشبكة عند أول فتح للصفحة)
+function whenAuthReady(fn){
+  if(dbReady){ fn(); return; }
+  const check = setInterval(function(){
+    if(dbReady){ clearInterval(check); fn(); }
+  }, 100);
+}
 let currentAnswersRef = null;
 function watchCurrentAnswers(index){
   if(currentAnswersRef) currentAnswersRef.off();
@@ -824,7 +848,9 @@ function createRoom(name, customCode){
   state.roomCode = customCode || genCode();
   const initialPlayers = {};
   initialPlayers[state.myId] = { name, score:0, streak:0 };
-  roomRef(state.roomCode).set({ status:'lobby', currentIndex:-1, players:initialPlayers, createdAt: Date.now() });
+  whenAuthReady(function(){
+    roomRef(state.roomCode).set({ status:'lobby', currentIndex:-1, players:initialPlayers, createdAt: Date.now() });
+  });
   attachRoomListener();
   saveSession();
 }
@@ -999,13 +1025,15 @@ function joinRoom(name, code){
   state.role='player';
   state.playerName=name;
   state.roomCode=code.toUpperCase();
-  roomRef(state.roomCode).child('players').child(state.myId).set({ name, score:0, streak:0 })
-    .then(() => { attachRoomListener(); saveSession(); })
-    .catch(err => {
-      state.screen='join-form';
-      state.joinError = 'تعذّر الانضمام: ' + err.message + ' — تأكد إن Realtime Database مفعّل ووضع test mode لسا فعّال بمشروع Firebase.';
-      render();
-    });
+  whenAuthReady(function(){
+    roomRef(state.roomCode).child('players').child(state.myId).set({ name, score:0, streak:0 })
+      .then(() => { attachRoomListener(); saveSession(); })
+      .catch(err => {
+        state.screen='join-form';
+        state.joinError = 'تعذّر الانضمام: ' + err.message + ' — تأكد إن قواعد Rules بمشروع Firebase مضبوطة كما بالتعليق أعلى الكود.';
+        render();
+      });
+  });
 }
 function submitAnswer(choiceIndex){
   if(state.myAnswerThisRound !== null) return;
