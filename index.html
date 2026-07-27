@@ -1566,7 +1566,7 @@ const QUESTIONS = [
 const QUESTION_DURATION = 12000;
 /* رقم إصدار اللعبة — يُحدَّث تلقائيًا مع كل تعديل بالكود، ويُستخدم لاكتشاف
    وجود نسخة أحدث على الخادم وتنبيه اللاعب لتحديث الصفحة (شوف checkForUpdates). */
-const GAME_VERSION = '2026-07-27-12';
+const GAME_VERSION = '2026-07-27-13';
 const REVEAL_DURATION = 2500;
 const CATEGORIES = [...new Set(QUESTIONS.map(q => q.cat))];
 const DIFF_LABELS = { 1:'سهل', 2:'متوسط', 3:'صعب' };
@@ -1620,11 +1620,12 @@ const state = {
   questionIds: [], numQuestionsChoice: 20, durationChoice: QUESTION_DURATION,
   selectedCats: [...CATEGORIES],
   selectedDiffs: [1,2,3], fastestId:null,
-  screen:'splash', lastStatus:null, lastIndex:null,
+  screen: (function(){ try{ return localStorage.getItem('jumaan_seen_intro') === '1' ? 'home' : 'splash'; }catch(e){ return 'splash'; } })(), lastStatus:null, lastIndex:null,
   pvpMode:false, pvpAsker:null, pvpTarget:null, paused:false,
   adaptiveMode:false, adaptiveDiff:2, gameCats:null, gameDiffs:null, totalCount:0,
-  kidsMode:false,
+  kidsMode:false, homeInstructionsOpen:false,
   soloScore:0, soloStreak:0, soloIndex:-1, soloQuestionIds:[], soloTotalCount:0,
+  soloPaused:false, soloPausedRemaining:0,
   soloAdaptiveMode:false, soloAdaptiveDiff:2, soloCats:null, soloDiffs:null, soloLastPoints:0, soloError:null,
   soloMaxStreak:0, soloCorrectCount:0, soloCatCorrect:{}, soloEarnedBadges:[],
 };
@@ -1712,11 +1713,61 @@ function shuffledIndices(n, count){
 }
 function totalQuestions(){ return state.totalCount || (state.questionIds && state.questionIds.length) || QUESTIONS.length; }
 function hostControlsHtml(){
-  return `<div class="row" style="justify-content:flex-end; gap:8px;">
+  return `<div class="row" style="justify-content:flex-end; gap:8px; flex-wrap:wrap;">
     <span onclick="pauseGame()" class="pill" style="cursor:pointer; user-select:none;">⏸ إيقاف مؤقت</span>
     <span onclick="endGameNow()" class="pill" style="cursor:pointer; user-select:none; color:var(--pink); border-color:var(--pink);">⏹ إنهاء اللعبة</span>
+    <span onclick="if(confirm('متأكد إنك تبغى تخرج؟ هذا رح يوقف اللعبة لكل اللاعبين بالغرفة.')) leaveRoom();" class="pill" style="cursor:pointer; user-select:none;">🚪 خروج</span>
   </div>`;
 }
+/* ================== أزرار التحكم بوضع "العب لحالك" ==================
+   إيقاف مؤقت / استئناف / إنهاء الجولة الآن / خروج — كلها محلية بدون Firebase. */
+function soloControlsHtml(){
+  return `<div class="row" style="justify-content:flex-end; gap:8px; flex-wrap:wrap;">
+    ${state.soloPaused
+      ? `<span onclick="soloResumeGame()" class="pill" style="cursor:pointer; user-select:none; color:var(--yellow); border-color:var(--yellow);">▶ استئناف</span>`
+      : `<span onclick="soloPauseGame()" class="pill" style="cursor:pointer; user-select:none;">⏸ إيقاف مؤقت</span>`}
+    <span onclick="soloEndGameNow()" class="pill" style="cursor:pointer; user-select:none; color:var(--pink); border-color:var(--pink);">⏹ إنهاء الجولة</span>
+    <span onclick="soloExitToHome()" class="pill" style="cursor:pointer; user-select:none;">🚪 خروج</span>
+  </div>`;
+}
+function soloPauseGame(){
+  cancelAnimationFrame(timerRAF);
+  clearTimeout(nextTimeout);
+  if(state.screen === 'solo-question' && state.questionStart){
+    state.soloPausedRemaining = Math.max(0, state.duration - (Date.now()-state.questionStart));
+  }
+  state.soloPaused = true;
+  render();
+}
+function soloResumeGame(){
+  state.soloPaused = false;
+  if(state.screen === 'solo-question'){
+    state.questionStart = Date.now();
+    if(state.soloPausedRemaining != null && state.soloPausedRemaining > 0){
+      state.duration = state.soloPausedRemaining;
+    }
+    render();
+    startHostTimer(state.duration, soloRevealAnswer);
+  } else {
+    render();
+  }
+}
+function soloEndGameNow(){
+  if(!confirm('متأكد إنك تبغى تنهي الجولة الآن؟ رح تظهر نتيجتك الحالية.')) return;
+  cancelAnimationFrame(timerRAF);
+  clearTimeout(nextTimeout);
+  state.soloPaused = false;
+  finishSoloGame();
+}
+function soloExitToHome(){
+  if(!confirm('متأكد إنك تبغى تخرج؟ رح تفقد تقدمك بهالجولة.')) return;
+  cancelAnimationFrame(timerRAF);
+  clearTimeout(nextTimeout);
+  state.soloPaused = false;
+  state.screen = 'home';
+  render();
+}
+
 function getQuestion(index){
   if(state.questionIds && state.questionIds.length) return QUESTIONS[state.questionIds[index]];
   return QUESTIONS[index];
@@ -1825,7 +1876,7 @@ function ensureFeedbackWidget(){
   `;
   box.innerHTML = `
     <div style="font-size:15px; font-weight:700; margin-bottom:10px;">لاحظت خطأ بسؤال أو معلومة؟ 🙏</div>
-    <p style="font-size:13px; opacity:0.8; line-height:1.7; margin:0 0 16px;">تواصل وياني وأنا أصححها بأسرع وقت</p>
+    <p style="font-size:13px; opacity:0.8; line-height:1.7; margin:0 0 16px;">تواصل معي وأصححها بأسرع وقت</p>
     <a href="mailto:kmasskmass@gmail.com" style="display:block; background:rgba(255,255,255,0.06); border-radius:12px; padding:12px; margin-bottom:10px; color:inherit; text-decoration:none; font-size:14px;">📧 kmasskmass@gmail.com</a>
     <a href="https://t.me/Kazhrani" target="_blank" rel="noopener" style="display:block; background:rgba(255,255,255,0.06); border-radius:12px; padding:12px; margin-bottom:16px; color:inherit; text-decoration:none; font-size:14px;">💬 تيليجرام @Kazhrani</a>
     <button id="feedbackCloseBtn" style="background:var(--yellow); color:#1a1a2e; border:none; border-radius:12px; padding:10px 20px; font-weight:700; cursor:pointer; width:100%;">إغلاق</button>
@@ -2413,50 +2464,8 @@ function startPlayerTimer(duration){
   timerRAF = requestAnimationFrame(bar);
 }
 
-/* ================== العرض (Render) ================== */
-function render(){
-  let html = '';
-
-  if(!configReady){
-    html = `
-      <div class="stack">
-        <div class="eyebrow">إعداد مطلوب</div>
-        <h1 style="font-size:26px;">وصّل مشروع Firebase أولاً</h1>
-        <div class="warn">
-          لسا ما حطيت إعدادات مشروع Firebase بالكود (المتغيّر <b>firebaseConfig</b> بأعلى ملف الـ HTML).
-          روح لـ console.firebase.google.com، أنشئ مشروع، فعّل Realtime Database،
-          وانسخ إعدادات تطبيق الويب مكان القيم "YOUR_..." ثم أعد تحميل الصفحة.
-          وتأكد من ضبط قواعد Rules الدائمة المذكورة في تعليق أعلى الكود بدل وضع الاختبار المؤقت (30 يوم).
-        </div>
-      </div>`;
-    app.innerHTML = html;
-    return;
-  }
-
-  if(state.screen === 'splash'){
-    html = `
-      <div class="stack" style="text-align:center; justify-content:center; min-height:70vh;">
-        <div>
-          <h1 style="font-size:52px; margin:0; line-height:1.15; letter-spacing:1px;">جمان <span style="color:var(--yellow);">Jumaan</span></h1>
-          <p class="muted" style="font-size:17px; margin:10px 0 4px;">مسابقة ثقافية جماعية حيّة</p>
-          <p class="muted" style="font-size:13px; margin:0; opacity:0.75;">إعداد أبو جمان كليب بن أحمد الزهراني</p>
-        </div>
-        <div class="card stack" style="margin-top:22px;">
-          <p class="muted" style="text-align:center; margin:0; line-height:1.7;">
-            اجمع أصدقاءك وعائلتك — سواء كنتوا بغرفة واحدة من جهاز واحد، أو في أحياء متباعدة، أو مدن مختلفة، أو حتى دول متعددة، المهم بس اتصال إنترنت — وتنافسوا لحظيًا على أكثر من ${QUESTIONS.length} سؤال بخمس فئات ثقافية،
-            مع مؤقّت لكل سؤال ونظام نقاط يكافئ السرعة والصحّة.
-          </p>
-        </div>
-        <button class="btn-primary btn-block" style="margin-top:20px;" onclick="state.screen='instructions'; render();">التالي ←</button>
-      </div>`;
-  }
-
-  else if(state.screen === 'instructions'){
-    html = `
-      <div class="stack">
-        <div class="eyebrow">قبل ما تبدأ · جمان Jumaan</div>
-        <h1 style="font-size:28px;">كيف تشتغل اللعبة؟</h1>
-        <div class="card stack" style="text-align:right;">
+function instructionsSectionsHtml(){
+  return `
           <div>
             <h3 style="font-size:16px; color:var(--yellow);">١) فكرة اللعبة</h3>
             <p class="muted">مسابقة معلومات جماعية حيّة، يشارك فيها عدد غير محدود من اللاعبين بنفس الوقت من أي جهاز متصل بالإنترنت. كل الأسئلة اختيار من متعدد، وفيه ضغط وقت لكل سؤال يزيد الإثارة.</p>
@@ -2471,7 +2480,7 @@ function render(){
           </div>
           <div>
             <h3 style="font-size:16px; color:var(--yellow);">٤) التحكم بالمسابقة قبل البدء</h3>
-            <p class="muted">بغرفة انتظار المضيف يقدر يختار <b>فئة أو أكثر</b> من فئات الأسئلة (ثقافة عامة، دينية، مفردات إنجليزية، تاريخ، جغرافيا) — مثلاً يخلي المسابقة دينية فقط أو مفردات إنجليزية فقط، وكمان يختار <b>مستوى الصعوبة</b> (سهل / متوسط / صعب) واحد أو أكثر — كل مستوى له نقاط مختلفة (سهل 500، متوسط 1000، صعب 1500) عشان الأسئلة الصعبة تستاهل نقاط أكثر. ويحدد <b>عدد الأسئلة</b> (تُسحب عشوائيًا من ضمن الفئات والمستويات اللي اخترتها)، وكمان <b>الوقت المتاح لكل سؤال</b> (من 8 إلى 30 ثانية) قبل ما يضغط "ابدأ اللعبة".</p>
+            <p class="muted">بغرفة انتظار المضيف يقدر يختار <b>فئة أو أكثر</b> من فئات الأسئلة (حاليًا: ${CATEGORIES.join('، ')}) — مثلاً يخلي المسابقة دينية فقط أو رياضيات فقط، وكمان يختار <b>مستوى الصعوبة</b> (سهل / متوسط / صعب) واحد أو أكثر — كل مستوى له نقاط مختلفة (سهل 500، متوسط 1000، صعب 1500) عشان الأسئلة الصعبة تستاهل نقاط أكثر. ويحدد <b>عدد الأسئلة</b> (تُسحب عشوائيًا من ضمن الفئات والمستويات اللي اخترتها)، وكمان <b>الوقت المتاح لكل سؤال</b> (تقدر تكتب أي عدد ثوانٍ تريده) قبل ما يضغط "ابدأ اللعبة".</p>
           </div>
           <div>
             <h3 style="font-size:16px; color:var(--yellow);">٥) طريقة اللعب والنقاط</h3>
@@ -2483,11 +2492,11 @@ function render(){
           </div>
           <div>
             <h3 style="font-size:16px; color:var(--yellow);">٧) إيقاف اللعبة مؤقتًا أو إنهاؤها ⏸️</h3>
-            <p class="muted">بأي وقت أثناء اللعبة، عند المضيف زران فوق الشاشة: <b>"⏸ إيقاف مؤقت"</b> يجمّد اللعبة والمؤقت للجميع لحين ما يضغط "استئناف اللعبة" (يكمل بنفس الوقت المتبقي بالضبط)، و<b>"⏹ إنهاء اللعبة"</b> ينهي المسابقة فورًا ويعرض النتائج النهائية بالنقاط الحالية حتى لو الأسئلة ما خلصت.</p>
+            <p class="muted">بأي وقت أثناء اللعبة، عند المضيف (وعندك بوضع "العب لحالك" أيضًا) أزرار: <b>"⏸ إيقاف مؤقت"</b> يجمّد اللعبة والمؤقت لحين ما تضغط "استئناف" (يكمل بنفس الوقت المتبقي بالضبط)، و<b>"⏹ إنهاء اللعبة"</b> ينهي المسابقة فورًا ويعرض النتائج النهائية بالنقاط الحالية حتى لو الأسئلة ما خلصت.</p>
           </div>
           <div>
             <h3 style="font-size:16px; color:var(--yellow);">٨) تصدير النتائج والطباعة للتثقف 📄</h3>
-            <p class="muted">بشاشة النهاية فيه زر <b>"تصدير النتائج"</b> يحمّل ملف نصي فيه ترتيب اللاعبين ونقاطهم وكل الأسئلة مع إجابة كل لاعب. وفي أي وقت (حتى قبل بدء أي لعبة) تقدر تضغط <b>"طباعة الأسئلة PDF"</b> — من الشاشة الرئيسية لطباعة كل الأسئلة، أو من غرفة انتظار المضيف لطباعة أسئلة الفئات المختارة بس — وتظهر كل الأسئلة مع الإجابة الصحيحة محددة، جاهزة تتحفظ كـ PDF للمذاكرة والتثقف.</p>
+            <p class="muted">بشاشة النهاية فيه زر <b>"تصدير النتائج"</b> يحمّل ملف نصي فيه ترتيب اللاعبين ونقاطهم وكل الأسئلة مع إجابة كل لاعب. وفي أي وقت (حتى قبل بدء أي لعبة) تقدر تضغط <b>"طباعة الأسئلة PDF"</b> — من الشاشة الرئيسية لطباعة كل الأسئلة أو قسم واحد بس، أو من غرفة انتظار المضيف لطباعة أسئلة الفئات المختارة بس — وتظهر كل الأسئلة مع الإجابة الصحيحة محددة، جاهزة تتحفظ كـ PDF للمذاكرة والتثقف.</p>
           </div>
           <div>
             <h3 style="font-size:16px; color:var(--yellow);">٩) عدة مجموعات بنفس الوقت</h3>
@@ -2524,9 +2533,56 @@ function render(){
           <div>
             <h3 style="font-size:16px; color:var(--yellow);">١٧) وضع الأطفال 🧒 (٨-١٤ سنة)</h3>
             <p class="muted">متاح بشاشة إعداد "العب لحالك" وبغرفة انتظار المضيف. عند تفعيله: تظهر بس الأسئلة الأبسط لغة والمناسبة للأعمار الصغيرة (بغض النظر عن مستوى الصعوبة)، وتختفي خيارات الصعوبة ووضع PvP والصعوبة التكيّفية تلقائيًا لأنها ما تحتاجها، وتكبر خطوط الأسئلة والخيارات على الشاشة لتكون أوضح للقراءة، وتصير رسائل النتيجة أكثر تشجيعًا وودّية. بالمسابقة الجماعية، تفعيل المضيف لهذا الوضع ينطبق تلقائيًا على كل اللاعبين بالغرفة.</p>
-          </div>
+          </div>`;
+}
+
+/* ================== العرض (Render) ================== */
+function render(){
+  let html = '';
+
+  if(!configReady){
+    html = `
+      <div class="stack">
+        <div class="eyebrow">إعداد مطلوب</div>
+        <h1 style="font-size:26px;">وصّل مشروع Firebase أولاً</h1>
+        <div class="warn">
+          لسا ما حطيت إعدادات مشروع Firebase بالكود (المتغيّر <b>firebaseConfig</b> بأعلى ملف الـ HTML).
+          روح لـ console.firebase.google.com، أنشئ مشروع، فعّل Realtime Database،
+          وانسخ إعدادات تطبيق الويب مكان القيم "YOUR_..." ثم أعد تحميل الصفحة.
+          وتأكد من ضبط قواعد Rules الدائمة المذكورة في تعليق أعلى الكود بدل وضع الاختبار المؤقت (30 يوم).
         </div>
-        <button class="btn-primary btn-block" onclick="state.screen='home'; render();">فهمت، ابدأ اللعب</button>
+      </div>`;
+    app.innerHTML = html;
+    return;
+  }
+
+  if(state.screen === 'splash'){
+    html = `
+      <div class="stack" style="text-align:center; justify-content:center; min-height:70vh;">
+        <div>
+          <h1 style="font-size:52px; margin:0; line-height:1.15; letter-spacing:1px;">جمان <span style="color:var(--yellow);">Jumaan</span></h1>
+          <p class="muted" style="font-size:17px; margin:10px 0 4px;">مسابقة ثقافية جماعية حيّة</p>
+          <p class="muted" style="font-size:13px; margin:0; opacity:0.75;">إعداد أبو جمان كليب بن أحمد الزهراني</p>
+        </div>
+        <div class="card stack" style="margin-top:22px;">
+          <p class="muted" style="text-align:center; margin:0; line-height:1.7;">
+            اجمع أصدقاءك وعائلتك — سواء كنتوا بغرفة واحدة من جهاز واحد، أو في أحياء متباعدة، أو مدن مختلفة، أو حتى دول متعددة، المهم بس اتصال إنترنت — وتنافسوا لحظيًا على أكثر من ${QUESTIONS.length} سؤال بـ${CATEGORIES.length} فئات ثقافية ومعرفية،
+            مع مؤقّت لكل سؤال ونظام نقاط يكافئ السرعة والصحّة.
+          </p>
+        </div>
+        <button class="btn-primary btn-block" style="margin-top:20px;" onclick="state.screen='instructions'; render();">التالي ←</button>
+      </div>`;
+  }
+
+  else if(state.screen === 'instructions'){
+    html = `
+      <div class="stack">
+        <div class="eyebrow">قبل ما تبدأ · جمان Jumaan</div>
+        <h1 style="font-size:28px;">كيف تشتغل اللعبة؟</h1>
+        <div class="card stack" style="text-align:right;">
+          ${instructionsSectionsHtml()}
+        </div>
+        <button class="btn-primary btn-block" onclick="localStorage.setItem('jumaan_seen_intro','1'); state.screen='home'; render();">فهمت، ابدأ اللعب</button>
       </div>`;
   }
 
@@ -2552,7 +2608,13 @@ function render(){
           <button class="btn-secondary btn-block" onclick="printQuestionsPDF(true)">🖨️ طباعة كل الأسئلة (PDF للتثقف)</button>
           <button class="btn-secondary btn-block" onclick="state.screen='print-select'; render();">🖨️ طباعة قسم واحد فقط</button>
         </div>
-        <p class="muted" style="text-align:center; text-decoration:underline; cursor:pointer;" onclick="state.screen='instructions'; render();">كيف تعمل اللعبة؟ (عرض التعليمات)</p>
+        <div class="card stack" style="padding:0; overflow:hidden;">
+          <div style="display:flex; align-items:center; justify-content:space-between; padding:14px 16px; cursor:pointer;" onclick="state.homeInstructionsOpen = !state.homeInstructionsOpen; render();">
+            <span style="font-weight:700; font-size:14px;">كيف تعمل اللعبة؟ (عرض التعليمات)</span>
+            <span style="font-size:14px; transition:transform 0.2s; display:inline-block; transform:rotate(${state.homeInstructionsOpen?'180deg':'0deg'});">▾</span>
+          </div>
+          ${state.homeInstructionsOpen ? `<div style="padding:0 16px 16px; text-align:right; border-top:1px solid var(--line);">${instructionsSectionsHtml()}</div>` : ''}
+        </div>
         <p class="footnote">مبني على Firebase Realtime Database — يشتغل بين أي جهازين على الإنترنت. عدد اللاعبين غير محدود، وبنك الأسئلة يحتوي أكثر من ${QUESTIONS.length} سؤال بـ${CATEGORIES.length} فئات (${CATEGORIES.join('، ')}) ويمكن إضافة المزيد لاحقًا من مصفوفة QUESTIONS في الكود.</p>
       </div>`;
   }
@@ -2640,8 +2702,21 @@ function render(){
     const answered = state.myAnswerThisRound !== null;
     const kidsQ = state.kidsMode ? 'font-size:26px; line-height:1.6;' : 'font-size:20px; line-height:1.5;';
     const kidsOpt = state.kidsMode ? 'font-size:19px; padding:20px 18px;' : '';
+    if(state.soloPaused){
+      html = `
+        <div class="stack">
+          ${soloControlsHtml()}
+          <div class="card stack" style="text-align:center; padding:40px 20px;">
+            <div style="font-size:40px;">⏸</div>
+            <h2 style="font-size:20px; margin:8px 0 0;">الجولة موقوفة مؤقتًا</h2>
+            <p class="muted">نقاطك حاليًا: ${state.soloScore}</p>
+            <button class="btn-primary btn-block" onclick="soloResumeGame()" style="margin-top:10px;">▶ استئناف الجولة</button>
+          </div>
+        </div>`;
+    } else {
     html = `
       <div class="stack">
+        ${soloControlsHtml()}
         <span class="pill">سؤال ${state.soloIndex+1} / ${state.soloTotalCount} · ${q.cat||''} · ${DIFF_LABELS[q.diff]||'متوسط'} (${DIFF_POINTS[q.diff]||1000})</span>
         <div class="row" style="justify-content:space-between; align-items:center;">
           <span class="pill">نقاطك: ${state.soloScore}</span>
@@ -2658,6 +2733,7 @@ function render(){
           </div>
         </div>
       </div>`;
+    }
   }
 
   else if(state.screen === 'solo-reveal'){
@@ -2667,6 +2743,7 @@ function render(){
     const normalMsg = wasCorrect ? '✅ إجابة صحيحة!' : (state.myAnswerThisRound===null ? '⏱ خلص الوقت!' : '❌ إجابة خاطئة');
     html = `
       <div class="stack">
+        ${soloControlsHtml()}
         <div class="card stack" style="text-align:center;">
           <div class="muted" style="${state.kidsMode?'font-size:20px; font-weight:700;':''}">${state.kidsMode ? kidsMsg : normalMsg}</div>
           ${wasCorrect ? `<div class="pill" style="align-self:center;">+${state.soloLastPoints} نقطة</div>` : ''}
@@ -2981,6 +3058,9 @@ function render(){
     const kidsOpt = state.kidsMode ? 'font-size:19px; padding:20px 18px;' : '';
     html = `
       <div class="stack">
+        <div class="row" style="justify-content:flex-end;">
+          <span onclick="if(confirm('متأكد إنك تبغى تخرج من الغرفة؟')) leaveRoom();" class="pill" style="cursor:pointer; user-select:none; font-size:11.5px;">🚪 خروج</span>
+        </div>
         <span class="pill">سؤال ${state.currentIndex+1} / ${totalQuestions()} · ${q.cat||''} · ${DIFF_LABELS[q.diff]||'متوسط'} (${DIFF_POINTS[q.diff]||1000})</span>
         ${state.pvpMode && targetName ? `<div class="pill" style="text-align:center;">🎯 ${askerName} يسأل ${targetName}${state.myId===state.pvpTarget?' (أنت)':''}</div>` : ''}
         <div class="timerbar-track"><div class="timerbar-fill" id="timerFill" style="width:100%"></div></div>
@@ -3003,6 +3083,9 @@ function render(){
     const q = getQuestion(state.currentIndex);
     html = `
       <div class="stack">
+        <div class="row" style="justify-content:flex-end;">
+          <span onclick="if(confirm('متأكد إنك تبغى تخرج من الغرفة؟')) leaveRoom();" class="pill" style="cursor:pointer; user-select:none; font-size:11.5px;">🚪 خروج</span>
+        </div>
         <div class="card stack" style="text-align:center;">
           <div class="muted">نقاطك حتى الآن</div>
           <div class="big-score">${mine ? mine.score : 0}</div>
