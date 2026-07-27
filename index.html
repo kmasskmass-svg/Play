@@ -972,6 +972,54 @@ function ensureReactionsLayer(){
   }
   return layer;
 }
+/* ================== كرة الملاحظات العائمة ==================
+   عنصر ثابت خارج #app (يُنشأ مرة واحدة ولا يتأثر بإعادة الرسم)، يظهر بكل
+   الشاشات، ويفتح نافذة صغيرة فيها طرق التواصل للإبلاغ عن خطأ بسؤال أو معلومة. */
+function ensureFeedbackWidget(){
+  if(document.getElementById('feedbackBubble')) return;
+
+  const bubble = document.createElement('div');
+  bubble.id = 'feedbackBubble';
+  bubble.textContent = '💬';
+  bubble.title = 'لاحظت خطأ بسؤال أو معلومة؟';
+  bubble.style.cssText = `
+    position:fixed; bottom:18px; left:18px; z-index:80;
+    width:52px; height:52px; border-radius:50%;
+    background:var(--yellow); color:#1a1a2e;
+    display:flex; align-items:center; justify-content:center;
+    font-size:24px; cursor:pointer; user-select:none;
+    box-shadow:0 4px 14px rgba(0,0,0,0.35);
+  `;
+
+  const overlay = document.createElement('div');
+  overlay.id = 'feedbackOverlay';
+  overlay.style.cssText = 'position:fixed; inset:0; z-index:90; background:rgba(0,0,0,0.55); display:none; align-items:center; justify-content:center; padding:20px;';
+
+  const box = document.createElement('div');
+  box.style.cssText = `
+    background:#1a1a2e; border:1.5px solid var(--line, rgba(255,255,255,0.15));
+    border-radius:16px; padding:22px; max-width:340px; width:100%;
+    font-family:var(--font-body); color:var(--ink, #fff); text-align:center;
+  `;
+  box.innerHTML = `
+    <div style="font-size:15px; font-weight:700; margin-bottom:10px;">لاحظت خطأ بسؤال أو معلومة؟ 🙏</div>
+    <p style="font-size:13px; opacity:0.8; line-height:1.7; margin:0 0 16px;">تواصل وياني وأنا أصححها بأسرع وقت</p>
+    <a href="mailto:kmasskmass@gmail.com" style="display:block; background:rgba(255,255,255,0.06); border-radius:12px; padding:12px; margin-bottom:10px; color:inherit; text-decoration:none; font-size:14px;">📧 kmasskmass@gmail.com</a>
+    <a href="https://t.me/Kazhrani" target="_blank" rel="noopener" style="display:block; background:rgba(255,255,255,0.06); border-radius:12px; padding:12px; margin-bottom:16px; color:inherit; text-decoration:none; font-size:14px;">💬 تيليجرام @Kazhrani</a>
+    <button id="feedbackCloseBtn" style="background:var(--yellow); color:#1a1a2e; border:none; border-radius:12px; padding:10px 20px; font-weight:700; cursor:pointer; width:100%;">إغلاق</button>
+  `;
+
+  overlay.appendChild(box);
+  document.body.appendChild(bubble);
+  document.body.appendChild(overlay);
+
+  function openFeedback(){ overlay.style.display = 'flex'; }
+  function closeFeedback(){ overlay.style.display = 'none'; }
+
+  bubble.addEventListener('click', openFeedback);
+  overlay.addEventListener('click', (e) => { if(e.target === overlay) closeFeedback(); });
+  box.querySelector('#feedbackCloseBtn').addEventListener('click', closeFeedback);
+}
 function showFloatingReaction(emoji, name){
   const layer = ensureReactionsLayer();
   const el = document.createElement('div');
@@ -2358,6 +2406,7 @@ window.addEventListener('online', () => {
   }
 });
 
+ensureFeedbackWidget();
 if(!restoreSession()) render();
 </script>
 </body>
