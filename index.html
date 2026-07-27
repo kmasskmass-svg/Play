@@ -666,6 +666,31 @@ const QUESTION_DURATION = 12000;
 const REVEAL_DURATION = 2500;
 const CATEGORIES = [...new Set(QUESTIONS.map(q => q.cat))];
 const DIFF_LABELS = { 1:'سهل', 2:'متوسط', 3:'صعب' };
+/* ================== الأوسمة (Badges) ==================
+   تُحسب فور انتهاء أي جولة (جماعية أو فردية) من إحصائيات نفس الجولة، وتُحفظ
+   بشكل تراكمي مع سجل اللاعب بلوحة الصدارة (leaderboard/{myId}/badges). */
+const BADGES = {
+  perfect:         { icon:'🎯', name:'دقة كاملة',   desc:'أجبت صح على كل أسئلة الجولة' },
+  streak5:         { icon:'🔥', name:'سلسلة نار',    desc:'حققت 5 إجابات صحيحة متتالية أو أكثر' },
+  speedster:       { icon:'⚡', name:'الأسرع',       desc:'كنت أول من يجاوب صح 3 مرات أو أكثر بنفس الجولة' },
+  category_expert: { icon:'📚', name:'خبير الفئة',   desc:'أجبت صح على 5 أسئلة أو أكثر من نفس الفئة بجولة واحدة' },
+  champion:        { icon:'👑', name:'البطل',        desc:'حللت بالمركز الأول بمسابقة جماعية' },
+};
+function computeRoundBadges(stats){
+  const ids = [];
+  if(stats.totalQuestions > 0 && stats.correctCount === stats.totalQuestions) ids.push('perfect');
+  if((stats.maxStreak||0) >= 5) ids.push('streak5');
+  if((stats.fastestCount||0) >= 3) ids.push('speedster');
+  if(stats.catCorrect && Object.values(stats.catCorrect).some(c => c >= 5)) ids.push('category_expert');
+  if(stats.isChampion) ids.push('champion');
+  return ids;
+}
+function badgesHtml(ids){
+  if(!ids || !ids.length) return '';
+  return `<div class="row" style="flex-wrap:wrap; justify-content:center; gap:8px;">
+    ${ids.map(id => BADGES[id] ? `<span class="pill" title="${BADGES[id].desc}">${BADGES[id].icon} ${BADGES[id].name}</span>` : '').join('')}
+  </div>`;
+}
 const DIFF_POINTS = { 1:500, 2:1000, 3:1500 };
 
 /* ================== حالة التطبيق ================== */
@@ -696,6 +721,7 @@ const state = {
   adaptiveMode:false, adaptiveDiff:2, gameCats:null, gameDiffs:null, totalCount:0,
   soloScore:0, soloStreak:0, soloIndex:-1, soloQuestionIds:[], soloTotalCount:0,
   soloAdaptiveMode:false, soloAdaptiveDiff:2, soloCats:null, soloDiffs:null, soloLastPoints:0, soloError:null,
+  soloMaxStreak:0, soloCorrectCount:0, soloCatCorrect:{}, soloEarnedBadges:[],
 };
 const app = document.getElementById('app');
 let timerRAF = null;
@@ -720,17 +746,20 @@ function whenAuthReady(fn){
    تُخزَّن تحت المسار "leaderboard/{myId}" — myId معرّف ثابت لكل جهاز (محفوظ
    بالمتصفح)، وليس اسم اللاعب، حتى لو تكرر نفس الاسم عند أشخاص مختلفين.
    كل جهاز يكتب سجله الخاص فقط، فما في تعارض بين اللاعبين. */
-function saveLeaderboardEntry(name, roundScore){
+function saveLeaderboardEntry(name, roundScore, roundBadgeIds){
   if(!configReady || !name) return;
   whenAuthReady(function(){
     const ref = leaderboardRef().child(state.myId);
     ref.once('value').then(function(snap){
-      const prev = snap.val() || { totalScore:0, gamesPlayed:0, bestScore:0 };
+      const prev = snap.val() || { totalScore:0, gamesPlayed:0, bestScore:0, badges:{} };
+      const badges = {...(prev.badges||{})};
+      (roundBadgeIds||[]).forEach(id => { badges[id] = true; });
       ref.set({
         name: name,
         totalScore: (prev.totalScore||0) + (roundScore||0),
         gamesPlayed: (prev.gamesPlayed||0) + 1,
         bestScore: Math.max(prev.bestScore||0, roundScore||0),
+        badges: badges,
         updatedAt: Date.now()
       });
     });
@@ -981,6 +1010,11 @@ function startSolo(){
   state.soloTotalCount = count;
   state.soloCats = cats;
   state.soloDiffs = diffs;
+  state.soloMaxStreak = 0;
+  state.soloCorrectCount = 0;
+  state.soloCatCorrect = {};
+  state.soloEarnedBadges = [];
+  state._soloConfettiDone = false;
 
   if(state.soloAdaptiveMode){
     const sortedDiffs = [...diffs].sort((a,b)=>a-b);
@@ -1023,6 +1057,10 @@ function soloRevealAnswer(){
     const points = Math.round(base/2 + (base/2)*speedFactor) + streakBonus;
     state.soloScore = (state.soloScore||0) + points;
     state.soloLastPoints = points;
+    state.soloCorrectCount = (state.soloCorrectCount||0) + 1;
+    state.soloMaxStreak = Math.max(state.soloMaxStreak||0, state.soloStreak);
+    state.soloCatCorrect = {...(state.soloCatCorrect||{})};
+    state.soloCatCorrect[q.cat] = (state.soloCatCorrect[q.cat]||0) + 1;
     if(state.soloAdaptiveMode && state.soloStreak >= 2 && state.soloAdaptiveDiff < 3) state.soloAdaptiveDiff += 1;
   } else {
     state.soloStreak = 0;
@@ -1036,21 +1074,30 @@ function soloRevealAnswer(){
   nextTimeout = setTimeout(soloNextQuestion, REVEAL_DURATION);
 }
 function soloGoNextNow(){ clearTimeout(nextTimeout); soloNextQuestion(); }
+function finishSoloGame(){
+  state.soloEarnedBadges = computeRoundBadges({
+    correctCount: state.soloCorrectCount||0,
+    totalQuestions: state.soloTotalCount||0,
+    maxStreak: state.soloMaxStreak||0,
+    fastestCount: 0,
+    catCorrect: state.soloCatCorrect||{},
+    isChampion: false
+  });
+  state.screen = 'solo-end';
+  saveLeaderboardEntry(state.playerName, state.soloScore, state.soloEarnedBadges);
+  render();
+}
 function soloNextQuestion(){
   clearTimeout(nextTimeout);
   const nextIndex = state.soloIndex + 1;
   if(nextIndex >= state.soloTotalCount){
-    state.screen = 'solo-end';
-    saveLeaderboardEntry(state.playerName, state.soloScore);
-    render();
+    finishSoloGame();
     return;
   }
   if(state.soloAdaptiveMode){
     const nextQid = pickAdaptiveQuestion(state.soloCats, state.soloDiffs, state.soloAdaptiveDiff, state.soloQuestionIds);
     if(nextQid === null){
-      state.screen = 'solo-end';
-      saveLeaderboardEntry(state.playerName, state.soloScore);
-      render();
+      finishSoloGame();
       return;
     }
     state.soloQuestionIds = [...state.soloQuestionIds, nextQid];
@@ -1131,6 +1178,7 @@ function revealAnswer(){
     for(const id in answers){
       if(!updatedPlayers[id]) continue;
       const a = answers[id];
+      const catCorrect = {...(updatedPlayers[id].catCorrect||{})};
       if(a.choice === q.correct){
         const elapsed = a.time - state.questionStart;
         if(elapsed < fastestTime){ fastestTime = elapsed; fastestId = id; }
@@ -1139,10 +1187,19 @@ function revealAnswer(){
         const streak = (updatedPlayers[id].streak||0) + 1;
         const streakBonus = streak >= 2 ? Math.min(streak-1, 5) * 50 : 0;
         const points = Math.round(base/2 + (base/2)*speedFactor) + streakBonus;
-        updatedPlayers[id] = {...updatedPlayers[id], score:(updatedPlayers[id].score||0)+points, streak};
+        catCorrect[q.cat] = (catCorrect[q.cat]||0) + 1;
+        updatedPlayers[id] = {
+          ...updatedPlayers[id], score:(updatedPlayers[id].score||0)+points, streak,
+          maxStreak: Math.max(updatedPlayers[id].maxStreak||0, streak),
+          correctCount: (updatedPlayers[id].correctCount||0) + 1,
+          catCorrect
+        };
       } else {
         updatedPlayers[id] = {...updatedPlayers[id], streak:0};
       }
+    }
+    if(fastestId && updatedPlayers[fastestId]){
+      updatedPlayers[fastestId] = {...updatedPlayers[fastestId], fastestCount:(updatedPlayers[fastestId].fastestCount||0)+1};
     }
     roomRef(state.roomCode).update({ status:'reveal', correctIndex:q.correct, players:updatedPlayers, fastestId: fastestId || null });
     if(state.adaptiveMode){
@@ -1516,6 +1573,11 @@ function render(){
           <div class="big-score">${state.soloScore}</div>
           <div class="muted" style="margin-top:6px;">تم حفظ نتيجتك بلوحة الصدارة 🏆</div>
         </div>
+        ${state.soloEarnedBadges && state.soloEarnedBadges.length ? `
+        <div class="card stack" style="text-align:center;">
+          <div class="muted" style="font-size:13px;">أوسمة حصلت عليها هالجولة</div>
+          ${badgesHtml(state.soloEarnedBadges)}
+        </div>` : ''}
         <button class="btn-primary btn-block" onclick="openLeaderboard()">🏆 عرض لوحة الصدارة</button>
         <button class="btn-secondary btn-block" onclick="showSoloSetup()">إعادة المحاولة</button>
         <button class="btn-secondary btn-block" onclick="state.screen='home'; render();">الرئيسية</button>
@@ -1830,11 +1892,34 @@ function render(){
 
   else if(state.screen === 'end'){
     const players = sortedPlayers();
+    if(!state._badgesComputed){
+      state._badgesComputed = true;
+      const mine = state.players && state.players[state.myId];
+      if(mine){
+        const isChampion = players.length>0 && players[0][0] === state.myId;
+        state._earnedBadges = computeRoundBadges({
+          correctCount: mine.correctCount||0,
+          totalQuestions: totalQuestions(),
+          maxStreak: mine.maxStreak||0,
+          fastestCount: mine.fastestCount||0,
+          catCorrect: mine.catCorrect||{},
+          isChampion
+        });
+        saveLeaderboardEntry(mine.name, mine.score||0, state._earnedBadges);
+      } else {
+        state._earnedBadges = [];
+      }
+    }
     html = `
       <div class="stack">
         <div id="confettiLayer" style="position:fixed; inset:0; pointer-events:none; overflow:hidden; z-index:50;"></div>
         <div class="eyebrow">انتهت المسابقة</div>
         <h1 style="font-size:28px;">🏆 النتائج النهائية</h1>
+        ${state._earnedBadges && state._earnedBadges.length ? `
+        <div class="card stack" style="text-align:center;">
+          <div class="muted" style="font-size:13px;">أوسمة حصلت عليها هالجولة</div>
+          ${badgesHtml(state._earnedBadges)}
+        </div>` : ''}
         <div class="card stack">
           <div class="stack" style="max-height:420px; overflow-y:auto;">
           ${players.map(([id,p],i) => `
@@ -1868,6 +1953,7 @@ function render(){
                 <div class="score-row" style="${i===0?'background:rgba(255,210,63,0.12); border-radius:12px; padding:8px 10px;':''}">
                   <span class="row" style="align-items:center; gap:10px;">
                     <span class="rank">${i===0?'👑':i+1}</span>${p.name}
+                    ${p.badges && Object.keys(p.badges).length ? `<span class="muted" style="font-size:11.5px;" title="${Object.keys(p.badges).map(id=>BADGES[id]?BADGES[id].name:'').join('، ')}">🏅×${Object.keys(p.badges).length}</span>` : ''}
                   </span>
                   <span class="row" style="gap:10px; align-items:center;">
                     <span class="muted" style="font-size:11.5px;">${p.gamesPlayed||0} جولة</span>
@@ -1885,8 +1971,10 @@ function render(){
   if(state.screen === 'end' && !state._confettiDone){
     state._confettiDone = true;
     spawnConfetti();
-    const mine = state.players && state.players[state.myId];
-    if(mine) saveLeaderboardEntry(mine.name, mine.score||0);
+  }
+  if(state.screen === 'solo-end' && !state._soloConfettiDone){
+    state._soloConfettiDone = true;
+    spawnConfetti();
   }
 }
 function spawnConfetti(){
