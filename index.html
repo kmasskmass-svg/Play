@@ -823,6 +823,69 @@ function getQuestion(index){
 /* ================== الاتصال بالغرفة (Firebase) ================== */
 function attachRoomListener(){
   roomRef(state.roomCode).on('value', snap => handleRoomSnapshot(snap.val()));
+  attachReactionsListener();
+}
+/* ================== الإيموجيز التفاعلية ==================
+   كل لاعب يقدر يبعت إيموجي سريع يظهر عائمًا لكل اللاعبين بنفس الغرفة لحظيًا.
+   تُخزَّن تحت مسار منفصل "reactions/{roomCode}" (بعيدًا عن بيانات الغرفة
+   الأساسية)، وتُقرأ عبر child_added عشان ما نعيد تحميل كل الغرفة مع كل إيموجي. */
+function reactionsRef(code){ return db.ref('reactions/' + code); }
+let reactionsListenerActive = null;
+function attachReactionsListener(){
+  if(reactionsListenerActive === state.roomCode) return; // مرتبط بنفس الغرفة أصلًا
+  reactionsListenerActive = state.roomCode;
+  const attachTime = Date.now();
+  reactionsRef(state.roomCode).on('child_added', snap => {
+    const r = snap.val();
+    if(!r || !r.emoji) return;
+    if(r.ts && r.ts < attachTime - 4000) return; // تجاهل إيموجيز قديمة عند الرجوع للغرفة
+    showFloatingReaction(r.emoji, r.name);
+  });
+}
+let lastReactionAt = 0;
+function sendReaction(emoji){
+  const now = Date.now();
+  if(now - lastReactionAt < 1200) return; // تبريد بسيط لمنع الإغراق
+  lastReactionAt = now;
+  whenAuthReady(function(){
+    reactionsRef(state.roomCode).push({ emoji, name: state.playerName || '؟', id: state.myId, ts: Date.now() });
+  });
+}
+function ensureReactionsLayer(){
+  let layer = document.getElementById('reactionsLayer');
+  if(!layer){
+    layer = document.createElement('div');
+    layer.id = 'reactionsLayer';
+    layer.style.cssText = 'position:fixed; inset:0; pointer-events:none; overflow:hidden; z-index:70;';
+    document.body.appendChild(layer);
+  }
+  return layer;
+}
+function showFloatingReaction(emoji, name){
+  const layer = ensureReactionsLayer();
+  const el = document.createElement('div');
+  el.textContent = emoji;
+  const label = document.createElement('div');
+  label.textContent = name || '';
+  label.style.cssText = 'font-size:11px; text-align:center; color:#fff; opacity:0.85; margin-top:-2px;';
+  const wrap = document.createElement('div');
+  const left = 8 + Math.random()*76;
+  wrap.style.cssText = `position:absolute; left:${left}%; bottom:6%; text-align:center; transition: transform 2.4s ease-out, opacity 2.4s ease-out; opacity:1;`;
+  el.style.cssText = 'font-size:30px; text-shadow:0 2px 8px rgba(0,0,0,0.45); line-height:1;';
+  wrap.appendChild(el);
+  wrap.appendChild(label);
+  layer.appendChild(wrap);
+  requestAnimationFrame(() => {
+    wrap.style.transform = `translateY(-${220 + Math.random()*80}px)`;
+    wrap.style.opacity = '0';
+  });
+  setTimeout(() => wrap.remove(), 2600);
+}
+function reactionBarHtml(){
+  const emojis = ['👏','😂','🔥','😮','👎'];
+  return `<div class="row" style="justify-content:center; gap:10px; flex-wrap:wrap;">
+    ${emojis.map(e => `<span onclick="sendReaction('${e}')" class="pill" style="cursor:pointer; user-select:none; font-size:18px; padding:8px 12px;">${e}</span>`).join('')}
+  </div>`;
 }
 function handleRoomSnapshot(room){
   if(!room) return;
@@ -1456,6 +1519,10 @@ function render(){
             <h3 style="font-size:16px; color:var(--yellow);">١٥) أسئلة بالصور 🖼️</h3>
             <p class="muted">بعض الأسئلة ممكن تكون مرفقة بصورة تظهر فوق نص السؤال مباشرة (بكل أوضاع اللعب: جماعي وفردي). إذا حبيت تضيف أسئلة بصورك الخاصة، ضيف الخاصية <code>img</code> برابط الصورة داخل مصفوفة الأسئلة بالكود (مثال: <code>img:"https://رابط-صورتك.jpg"</code>) — ولو الرابط ما اشتغل لأي سبب، السؤال يستمر طبيعي بدون الصورة فقط.</p>
           </div>
+          <div>
+            <h3 style="font-size:16px; color:var(--yellow);">١٦) الإيموجيز التفاعلية 👏</h3>
+            <p class="muted">بغرفة الانتظار وبعد كشف كل إجابة (بالمسابقة الجماعية بس)، فيه شريط إيموجيز سريع (👏 😂 🔥 😮 👎) تقدر تضغط عليه لإرسال ردة فعل تظهر عائمة لحظيًا لكل اللاعبين بنفس الغرفة — طريقة بسيطة تحيي جو المسابقة بدون الحاجة لكتابة أي نص.</p>
+          </div>
         </div>
         <button class="btn-primary btn-block" onclick="state.screen='home'; render();">فهمت، ابدأ اللعب</button>
       </div>`;
@@ -1700,6 +1767,7 @@ function render(){
           </div>
           <button class="btn-primary btn-block ${players.length===0?'btn-disabled':''}" ${players.length===0?'disabled':''} onclick="startGame()">ابدأ اللعبة</button>
         </div>
+        ${reactionBarHtml()}
       </div>`;
   }
 
@@ -1721,6 +1789,7 @@ function render(){
               </span>
             </div>`).join('')}
         </div>
+        ${reactionBarHtml()}
       </div>`;
   }
 
@@ -1865,6 +1934,7 @@ function render(){
           </div>
         </div>
         <button class="btn-primary btn-block" onclick="goToNextNow()">التالي الآن ⏭</button>
+        ${reactionBarHtml()}
       </div>`;
   }
 
@@ -1913,6 +1983,7 @@ function render(){
           </div>
         </div>
         <p class="muted" style="text-align:center;">السؤال التالي قريبًا…</p>
+        ${reactionBarHtml()}
       </div>`;
   }
 
