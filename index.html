@@ -175,6 +175,9 @@ if(configReady){
    حيث correct هو رقم الإجابة الصحيحة بدءًا من 0
    ======================================================= */
 const QUESTIONS = [
+  // ---------- أسئلة بالصور (تجريبية — استبدلها بروابط صورك الخاصة، شوف تعليمات اللعبة) ----------
+  { cat:"ثقافة عامة", q:"هذا مثال لسؤال فيه صورة (رقم 1) — شنو تشوف؟", options:["مربّع أصفر","دائرة زرقاء","مثلث أحمر","نجمة خضراء"], correct:0 , diff:1, img:"https://placehold.co/600x360/1a1a2e/ffd23f?text=%D8%B5%D9%88%D8%B1%D8%A9+%D8%AA%D9%88%D8%B6%D9%8A%D8%AD%D9%8A%D8%A9+1" },
+  { cat:"ثقافة عامة", q:"هذا مثال ثانٍ لسؤال فيه صورة — شنو تشوف؟", options:["مربّع أصفر","دائرة زرقاء","مثلث أحمر","نجمة خضراء"], correct:0 , diff:1, img:"https://placehold.co/600x360/1a1a2e/ffd23f?text=%D9%85%D8%B1%D8%A8%D9%91%D8%B9+%D8%A3%D8%B5%D9%81%D8%B1" },
   // ---------- ثقافة عامة ----------
   { cat:"ثقافة عامة", q:"ما هي عاصمة السعودية؟", options:["جدة","الرياض","الدمام","مكة"], correct:1 , diff:1 },
   { cat:"ثقافة عامة", q:"كم عدد قارات العالم؟", options:["5","6","7","8"], correct:2 , diff:2 },
@@ -1123,7 +1126,7 @@ function printQuestionsPDF(allCats){
     body += `<h2 class="cat-title">${esc(cat)}</h2>`;
     byCat[cat].forEach((q, i) => {
       body += `<div class="q-block">
-        <div class="q-text">${i+1}. ${esc(q.q)}</div>
+        <div class="q-text">${i+1}. ${esc(q.q)}${q.img ? ' 🖼️ <span style="font-weight:normal; color:#888; font-size:12px;">(هذا السؤال فيه صورة، تظهر بس داخل اللعبة)</span>' : ''}</div>
         <ul class="opts">
           ${q.options.map((opt, oi) => `<li class="${oi===q.correct?'correct':''}">${oi===q.correct?'✔ ':''}${esc(opt)}</li>`).join('')}
         </ul>
@@ -1433,6 +1436,26 @@ function render(){
             <h3 style="font-size:16px; color:var(--yellow);">١٠) لو صار انقطاع أو تحديث للصفحة</h3>
             <p class="muted">اللعبة تحفظ مكانك تلقائيًا، فلو انحدّثت الصفحة بالغلط أو انقطع الاتصال لحظيًا، رح ترجع لنفس الغرفة ونفس السؤال بمجرد ما تفتح الصفحة من جديد. وإذا حبيت تخرج من الغرفة الحالية وتبدأ وحدة جديدة، فيه رابط "خروج / غرفة جديدة" فوق شاشة الانتظار.</p>
           </div>
+          <div>
+            <h3 style="font-size:16px; color:var(--yellow);">١١) لوحة الصدارة 🏆</h3>
+            <p class="muted">من الشاشة الرئيسية أو من شاشة نهاية أي جولة، تقدر تفتح "لوحة الصدارة" وتشوف أفضل النتائج المسجّلة من كل الأجهزة اللي لعبت اللعبة، مرتبة حسب أعلى نتيجة حققها كل لاعب. نتيجتك تُحفظ تلقائيًا بمجرد ما تنتهي أي جولة (جماعية أو فردية)، بدون أي خطوة إضافية منك.</p>
+          </div>
+          <div>
+            <h3 style="font-size:16px; color:var(--yellow);">١٢) الصعوبة التكيّفية 🧠</h3>
+            <p class="muted">خيار يقدر المضيف يفعّله من غرفة الانتظار قبل بدء اللعبة الجماعية (أو تفعّله بنفسك بوضع "العب لحالك"). عند التفعيل، الأسئلة ترتفع صعوبة تلقائيًا كل ما أغلب اللاعبين يجاوبون صح، وتنخفض إذا أغلبهم يخطئ — ضمن مستويات الصعوبة اللي اخترتها. الهدف إنها تناسب مستوى اللاعبين الفعلي بدل صعوبة ثابتة.</p>
+          </div>
+          <div>
+            <h3 style="font-size:16px; color:var(--yellow);">١٣) العب لحالك 🎮</h3>
+            <p class="muted">من الشاشة الرئيسية زر "العب لحالك (بدون غرفة)" يفتح لك تدريب فردي فوري — بدون انتظار أصدقاء ولا كود غرفة. تختار الفئات والصعوبة وعدد الأسئلة، وتلعب مباشرة، ونتيجتك تُحفظ بلوحة الصدارة بنفس طريقة اللعب الجماعي.</p>
+          </div>
+          <div>
+            <h3 style="font-size:16px; color:var(--yellow);">١٤) الأوسمة 🏅</h3>
+            <p class="muted">بعد أي جولة (جماعية أو فردية) تقدر تكسب أوسمة حسب أدائك: <b>🎯 دقة كاملة</b> (كل الأسئلة صح)، <b>🔥 سلسلة نار</b> (5 إجابات صحيحة متتالية أو أكثر)، <b>⚡ الأسرع</b> (أول من يجاوب صح 3 مرات بجولة جماعية)، <b>📚 خبير الفئة</b> (5 إجابات صح من نفس الفئة)، و<b>👑 البطل</b> (المركز الأول بمسابقة جماعية). كل وسام تكسبه يبقى محفوظًا بسجلك للأبد، وتقدر تشوف عدد أوسمتك بجانب اسمك بلوحة الصدارة.</p>
+          </div>
+          <div>
+            <h3 style="font-size:16px; color:var(--yellow);">١٥) أسئلة بالصور 🖼️</h3>
+            <p class="muted">بعض الأسئلة ممكن تكون مرفقة بصورة تظهر فوق نص السؤال مباشرة (بكل أوضاع اللعب: جماعي وفردي). إذا حبيت تضيف أسئلة بصورك الخاصة، ضيف الخاصية <code>img</code> برابط الصورة داخل مصفوفة الأسئلة بالكود (مثال: <code>img:"https://رابط-صورتك.jpg"</code>) — ولو الرابط ما اشتغل لأي سبب، السؤال يستمر طبيعي بدون الصورة فقط.</p>
+          </div>
         </div>
         <button class="btn-primary btn-block" onclick="state.screen='home'; render();">فهمت، ابدأ اللعب</button>
       </div>`;
@@ -1533,6 +1556,7 @@ function render(){
         </div>
         <div class="timerbar-track"><div class="timerbar-fill" id="timerFill" style="width:100%"></div></div>
         <div class="card stack">
+          ${q.img ? `<img src="${q.img}" alt="" style="width:100%; max-height:220px; object-fit:cover; border-radius:12px; margin-bottom:2px;" onerror="this.style.display='none';">` : ''}
           <h2 style="font-size:20px; line-height:1.5;">${q.q}</h2>
           <div class="stack">
             ${q.options.map((opt,i) => `
@@ -1802,6 +1826,7 @@ function render(){
         ${state.pvpMode && targetName ? `<div class="pill" style="text-align:center;">🎯 ${askerName} يسأل ${targetName}</div>` : ''}
         <div class="timerbar-track"><div class="timerbar-fill" id="timerFill" style="width:100%"></div></div>
         <div class="card stack">
+          ${q.img ? `<img src="${q.img}" alt="" style="width:100%; max-height:220px; object-fit:cover; border-radius:12px; margin-bottom:2px;" onerror="this.style.display='none';">` : ''}
           <h2 style="font-size:22px; line-height:1.5;">${q.q}</h2>
           <div class="stack">
             ${q.options.map((opt,i) => `
@@ -1855,6 +1880,7 @@ function render(){
         ${state.pvpMode && targetName ? `<div class="pill" style="text-align:center;">🎯 ${askerName} يسأل ${targetName}${state.myId===state.pvpTarget?' (أنت)':''}</div>` : ''}
         <div class="timerbar-track"><div class="timerbar-fill" id="timerFill" style="width:100%"></div></div>
         <div class="card stack">
+          ${q.img ? `<img src="${q.img}" alt="" style="width:100%; max-height:220px; object-fit:cover; border-radius:12px; margin-bottom:2px;" onerror="this.style.display='none';">` : ''}
           <h2 style="font-size:20px; line-height:1.5;">${q.q}</h2>
           <div class="stack">
             ${q.options.map((opt,i) => `
