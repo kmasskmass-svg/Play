@@ -694,6 +694,8 @@ const state = {
   screen:'splash', lastStatus:null, lastIndex:null,
   pvpMode:false, pvpAsker:null, pvpTarget:null, paused:false,
   adaptiveMode:false, adaptiveDiff:2, gameCats:null, gameDiffs:null, totalCount:0,
+  soloScore:0, soloStreak:0, soloIndex:-1, soloQuestionIds:[], soloTotalCount:0,
+  soloAdaptiveMode:false, soloAdaptiveDiff:2, soloCats:null, soloDiffs:null, soloLastPoints:0, soloError:null,
 };
 const app = document.getElementById('app');
 let timerRAF = null;
@@ -953,6 +955,113 @@ function pickAdaptiveQuestion(cats, diffs, targetDiff, usedIds){
     candidates = pool.filter(i => Math.abs((QUESTIONS[i].diff||2) - targetDiff) === bestDist);
   }
   return candidates[Math.floor(Math.random()*candidates.length)];
+}
+
+/* ================== وضع اللعب الفردي (Solo) — بدون غرفة، محليًا بالكامل ================== */
+function showSoloSetup(){ state.soloError=null; state.screen='solo-setup'; render(); }
+function toggleSoloAdaptive(){ state.soloAdaptiveMode = !state.soloAdaptiveMode; render(); }
+function startSolo(){
+  const name = document.getElementById('soloNameInput').value.trim();
+  if(!name){ state.soloError='لازم تكتب اسمك أولاً.'; render(); return; }
+  const cats = (state.selectedCats && state.selectedCats.length) ? state.selectedCats : CATEGORIES;
+  const diffs = (state.selectedDiffs && state.selectedDiffs.length) ? state.selectedDiffs : [1,2,3];
+  const pool = QUESTIONS.map((q,i)=>i).filter(i => cats.includes(QUESTIONS[i].cat) && diffs.includes(QUESTIONS[i].diff||2));
+  if(pool.length === 0){ state.soloError='لازم تختار فئة ومستوى صعوبة فيهم أسئلة قبل ما تبدأ.'; render(); return; }
+  let count = parseInt(document.getElementById('soloNumQInput')?.value, 10);
+  if(!count || count < 1) count = 10;
+  count = Math.max(1, Math.min(pool.length, count));
+  let dur = parseInt(document.getElementById('soloDurSelect')?.value, 10);
+  if(!dur) dur = QUESTION_DURATION;
+
+  state.playerName = name;
+  state.soloError = null;
+  state.soloScore = 0;
+  state.soloStreak = 0;
+  state.soloIndex = 0;
+  state.soloTotalCount = count;
+  state.soloCats = cats;
+  state.soloDiffs = diffs;
+
+  if(state.soloAdaptiveMode){
+    const sortedDiffs = [...diffs].sort((a,b)=>a-b);
+    const startDiff = sortedDiffs[Math.floor((sortedDiffs.length-1)/2)];
+    state.soloAdaptiveDiff = startDiff;
+    state.soloQuestionIds = [pickAdaptiveQuestion(cats, diffs, startDiff, [])];
+  } else {
+    const shuffledPool = [...pool];
+    for(let i=shuffledPool.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [shuffledPool[i],shuffledPool[j]]=[shuffledPool[j],shuffledPool[i]]; }
+    state.soloQuestionIds = shuffledPool.slice(0, count);
+  }
+  state.duration = dur;
+  state.correctIndex = null;
+  state.myAnswerThisRound = null;
+  state.questionStart = Date.now();
+  state.screen = 'solo-question';
+  render();
+  startHostTimer(dur, soloRevealAnswer);
+}
+function getSoloQuestion(index){ return QUESTIONS[state.soloQuestionIds[index]]; }
+function submitSoloAnswer(choiceIndex){
+  if(state.myAnswerThisRound !== null) return;
+  state.myAnswerThisRound = choiceIndex;
+  if(navigator.vibrate) navigator.vibrate(40);
+  cancelAnimationFrame(timerRAF);
+  soloRevealAnswer();
+}
+function soloRevealAnswer(){
+  cancelAnimationFrame(timerRAF);
+  if(state.correctIndex !== null) return; // منع التنفيذ مرتين (اختيار يدوي ثم انتهاء الوقت)
+  const q = getSoloQuestion(state.soloIndex);
+  const correct = state.myAnswerThisRound === q.correct;
+  state.correctIndex = q.correct;
+  if(correct){
+    const elapsed = Date.now() - state.questionStart;
+    const speedFactor = Math.max(0, 1 - elapsed/state.duration);
+    const base = DIFF_POINTS[q.diff] || 1000;
+    state.soloStreak = (state.soloStreak||0) + 1;
+    const streakBonus = state.soloStreak >= 2 ? Math.min(state.soloStreak-1, 5) * 50 : 0;
+    const points = Math.round(base/2 + (base/2)*speedFactor) + streakBonus;
+    state.soloScore = (state.soloScore||0) + points;
+    state.soloLastPoints = points;
+    if(state.soloAdaptiveMode && state.soloStreak >= 2 && state.soloAdaptiveDiff < 3) state.soloAdaptiveDiff += 1;
+  } else {
+    state.soloStreak = 0;
+    state.soloLastPoints = 0;
+    if(state.soloAdaptiveMode && state.soloAdaptiveDiff > 1) state.soloAdaptiveDiff -= 1;
+  }
+  playTone(correct);
+  state.screen = 'solo-reveal';
+  render();
+  clearTimeout(nextTimeout);
+  nextTimeout = setTimeout(soloNextQuestion, REVEAL_DURATION);
+}
+function soloGoNextNow(){ clearTimeout(nextTimeout); soloNextQuestion(); }
+function soloNextQuestion(){
+  clearTimeout(nextTimeout);
+  const nextIndex = state.soloIndex + 1;
+  if(nextIndex >= state.soloTotalCount){
+    state.screen = 'solo-end';
+    saveLeaderboardEntry(state.playerName, state.soloScore);
+    render();
+    return;
+  }
+  if(state.soloAdaptiveMode){
+    const nextQid = pickAdaptiveQuestion(state.soloCats, state.soloDiffs, state.soloAdaptiveDiff, state.soloQuestionIds);
+    if(nextQid === null){
+      state.screen = 'solo-end';
+      saveLeaderboardEntry(state.playerName, state.soloScore);
+      render();
+      return;
+    }
+    state.soloQuestionIds = [...state.soloQuestionIds, nextQid];
+  }
+  state.soloIndex = nextIndex;
+  state.correctIndex = null;
+  state.myAnswerThisRound = null;
+  state.questionStart = Date.now();
+  state.screen = 'solo-question';
+  render();
+  startHostTimer(state.duration, soloRevealAnswer);
 }
 
 function printQuestionsPDF(allCats){
@@ -1285,6 +1394,7 @@ function render(){
         <div class="card stack">
           <button class="btn-primary btn-block" onclick="showHostForm()">إنشاء مسابقة والعب فيها</button>
           <button class="btn-secondary btn-block" onclick="showJoinForm()">الانضمام كلاعب فقط</button>
+          <button class="btn-secondary btn-block" onclick="showSoloSetup()">🎮 العب لحالك (بدون غرفة)</button>
           <button class="btn-secondary btn-block" onclick="openLeaderboard()">🏆 لوحة الصدارة</button>
           <button class="btn-secondary btn-block" onclick="printQuestionsPDF(true)">🖨️ طباعة كل الأسئلة (PDF للتثقف)</button>
         </div>
@@ -1306,6 +1416,109 @@ function render(){
           <button class="btn-primary btn-block" onclick="handleHostClick()">إنشاء الغرفة</button>
           <button class="btn-secondary btn-block" onclick="state.screen='home'; render();">رجوع</button>
         </div>
+      </div>`;
+  }
+
+  else if(state.screen === 'solo-setup'){
+    html = `
+      <div class="stack">
+        <div class="eyebrow">تدريب فردي</div>
+        <h1 style="font-size:26px;">🎮 العب لحالك</h1>
+        <p class="muted" style="margin-top:-8px;">بدون غرفة ولا انتظار أصدقاء — تبدأ فورًا وتظهر نتيجتك بلوحة الصدارة.</p>
+        <div class="card stack">
+          <input id="soloNameInput" placeholder="اسمك" maxlength="16" value="${state.playerName||''}">
+          ${state.soloError ? `<div class="warn">${state.soloError}</div>` : ''}
+          <label class="muted" style="font-size:13px;">فئات الأسئلة (اختر وحدة أو أكثر)</label>
+          <div class="row" style="flex-wrap:wrap;">
+            ${CATEGORIES.map(cat => {
+              const on = state.selectedCats.includes(cat);
+              const count = QUESTIONS.filter(q=>q.cat===cat).length;
+              return `<span onclick="toggleCategory('${cat}')" class="pill" style="cursor:pointer; user-select:none; border:1.5px solid ${on?'var(--yellow)':'var(--line)'}; color:${on?'var(--yellow)':'var(--muted)'}; background:${on?'rgba(255,210,63,0.12)':'rgba(255,255,255,0.03)'};">${on?'✓ ':''}${cat} (${count})</span>`;
+            }).join('')}
+          </div>
+          <label class="muted" style="font-size:13px;">مستوى الصعوبة</label>
+          <div class="row" style="flex-wrap:wrap;">
+            ${[1,2,3].map(d => {
+              const on = state.selectedDiffs.includes(d);
+              const count = QUESTIONS.filter(q=>(q.diff||2)===d && state.selectedCats.includes(q.cat)).length;
+              return `<span onclick="toggleDiff(${d})" class="pill" style="cursor:pointer; user-select:none; border:1.5px solid ${on?'var(--yellow)':'var(--line)'}; color:${on?'var(--yellow)':'var(--muted)'}; background:${on?'rgba(255,210,63,0.12)':'rgba(255,255,255,0.03)'};">${on?'✓ ':''}${DIFF_LABELS[d]} (${count})</span>`;
+            }).join('')}
+          </div>
+          <label class="muted" style="font-size:13px;">عدد الأسئلة</label>
+          <input id="soloNumQInput" type="number" min="1" max="${QUESTIONS.length}" value="10">
+          <label class="muted" style="font-size:13px;">الوقت لكل سؤال</label>
+          <select id="soloDurSelect" style="font-family:var(--font-body); font-size:16px; padding:14px 16px; border-radius:12px; border:1.5px solid var(--line); background:rgba(255,255,255,0.04); color:var(--ink); width:100%;">
+            <option value="8000">8 ثواني</option>
+            <option value="12000" selected>12 ثانية</option>
+            <option value="15000">15 ثانية</option>
+            <option value="20000">20 ثانية</option>
+            <option value="30000">30 ثانية</option>
+          </select>
+          <div class="row" style="justify-content:space-between; align-items:center; background:rgba(255,255,255,0.04); border-radius:12px; padding:12px 14px; margin-top:4px;">
+            <span style="font-size:14px;">🧠 صعوبة تكيّفية</span>
+            <span onclick="toggleSoloAdaptive()" class="pill" style="cursor:pointer; user-select:none; border:1.5px solid ${state.soloAdaptiveMode?'var(--yellow)':'var(--line)'}; color:${state.soloAdaptiveMode?'var(--yellow)':'var(--muted)'};">${state.soloAdaptiveMode?'✓ مفعّل':'غير مفعّل'}</span>
+          </div>
+          <button class="btn-primary btn-block" onclick="startSolo()">ابدأ التدريب</button>
+          <button class="btn-secondary btn-block" onclick="state.screen='home'; render();">رجوع</button>
+        </div>
+      </div>`;
+  }
+
+  else if(state.screen === 'solo-question'){
+    const q = getSoloQuestion(state.soloIndex);
+    const answered = state.myAnswerThisRound !== null;
+    html = `
+      <div class="stack">
+        <span class="pill">سؤال ${state.soloIndex+1} / ${state.soloTotalCount} · ${q.cat||''} · ${DIFF_LABELS[q.diff]||'متوسط'} (${DIFF_POINTS[q.diff]||1000})</span>
+        <div class="row" style="justify-content:space-between; align-items:center;">
+          <span class="pill">نقاطك: ${state.soloScore}</span>
+          ${(state.soloStreak||0)>=2 ? `<span class="pill" style="color:#ff8a3d;">🔥×${state.soloStreak}</span>` : ''}
+        </div>
+        <div class="timerbar-track"><div class="timerbar-fill" id="timerFill" style="width:100%"></div></div>
+        <div class="card stack">
+          <h2 style="font-size:20px; line-height:1.5;">${q.q}</h2>
+          <div class="stack">
+            ${q.options.map((opt,i) => `
+              <button class="opt ${answered && i===state.myAnswerThisRound ? 'correct' : ''}" ${answered?'disabled':''}
+                onclick="submitSoloAnswer(${i})">${opt}</button>`).join('')}
+          </div>
+        </div>
+      </div>`;
+  }
+
+  else if(state.screen === 'solo-reveal'){
+    const q = getSoloQuestion(state.soloIndex);
+    const wasCorrect = state.myAnswerThisRound === q.correct;
+    html = `
+      <div class="stack">
+        <div class="card stack" style="text-align:center;">
+          <div class="muted">${wasCorrect ? '✅ إجابة صحيحة!' : (state.myAnswerThisRound===null ? '⏱ خلص الوقت!' : '❌ إجابة خاطئة')}</div>
+          ${wasCorrect ? `<div class="pill" style="align-self:center;">+${state.soloLastPoints} نقطة</div>` : ''}
+          <div class="muted" style="margin-top:6px;">نقاطك الكلية</div>
+          <div class="big-score">${state.soloScore}</div>
+        </div>
+        <div class="card stack">
+          <h3 style="font-size:16px;">الإجابة الصحيحة</h3>
+          <div class="stack">${q.options.map((opt,i) => `<div class="opt ${i===q.correct?'correct':''}">${opt}</div>`).join('')}</div>
+        </div>
+        <button class="btn-primary btn-block" onclick="soloGoNextNow()">التالي الآن ⏭</button>
+      </div>`;
+  }
+
+  else if(state.screen === 'solo-end'){
+    html = `
+      <div class="stack">
+        <div id="confettiLayer" style="position:fixed; inset:0; pointer-events:none; overflow:hidden; z-index:50;"></div>
+        <div class="eyebrow">انتهى التدريب</div>
+        <h1 style="font-size:28px;">🏁 نتيجتك النهائية</h1>
+        <div class="card stack" style="text-align:center;">
+          <div class="muted">النقاط</div>
+          <div class="big-score">${state.soloScore}</div>
+          <div class="muted" style="margin-top:6px;">تم حفظ نتيجتك بلوحة الصدارة 🏆</div>
+        </div>
+        <button class="btn-primary btn-block" onclick="openLeaderboard()">🏆 عرض لوحة الصدارة</button>
+        <button class="btn-secondary btn-block" onclick="showSoloSetup()">إعادة المحاولة</button>
+        <button class="btn-secondary btn-block" onclick="state.screen='home'; render();">الرئيسية</button>
       </div>`;
   }
 
