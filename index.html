@@ -691,8 +691,9 @@ const state = {
   questionIds: [], numQuestionsChoice: 20, durationChoice: QUESTION_DURATION,
   selectedCats: [...CATEGORIES],
   selectedDiffs: [1,2,3], fastestId:null,
-  screen:'instructions', lastStatus:null, lastIndex:null,
+  screen:'splash', lastStatus:null, lastIndex:null,
   pvpMode:false, pvpAsker:null, pvpTarget:null, paused:false,
+  adaptiveMode:false, adaptiveDiff:2, gameCats:null, gameDiffs:null, totalCount:0,
 };
 const app = document.getElementById('app');
 let timerRAF = null;
@@ -773,7 +774,7 @@ function shuffledIndices(n, count){
   for(let i=arr.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [arr[i],arr[j]]=[arr[j],arr[i]]; }
   return arr.slice(0, count);
 }
-function totalQuestions(){ return (state.questionIds && state.questionIds.length) || QUESTIONS.length; }
+function totalQuestions(){ return state.totalCount || (state.questionIds && state.questionIds.length) || QUESTIONS.length; }
 function hostControlsHtml(){
   return `<div class="row" style="justify-content:flex-end; gap:8px;">
     <span onclick="pauseGame()" class="pill" style="cursor:pointer; user-select:none;">⏸ إيقاف مؤقت</span>
@@ -793,6 +794,11 @@ function handleRoomSnapshot(room){
   if(!room) return;
   state.players = room.players || {};
   if(room.pvpMode !== undefined) state.pvpMode = room.pvpMode;
+  if(room.adaptiveMode !== undefined) state.adaptiveMode = room.adaptiveMode;
+  if(room.adaptiveDiff !== undefined) state.adaptiveDiff = room.adaptiveDiff;
+  if(room.gameCats) state.gameCats = room.gameCats;
+  if(room.gameDiffs) state.gameDiffs = room.gameDiffs;
+  if(room.totalCount) state.totalCount = room.totalCount;
   state.pvpAsker = room.pvpAsker || null;
   state.pvpTarget = room.pvpTarget || null;
   state.fastestId = room.fastestId || null;
@@ -903,16 +909,52 @@ function startGame(){
   count = Math.max(1, Math.min(pool.length, count));
   let dur = parseInt(document.getElementById('durSelect')?.value, 10);
   if(!dur) dur = state.durationChoice || QUESTION_DURATION;
+
+  if(state.adaptiveMode){
+    // يبدأ من مستوى وسط بين مستويات الصعوبة المختارة، ثم يرتفع وينخفض تلقائيًا
+    const sortedDiffs = [...diffs].sort((a,b)=>a-b);
+    const startDiff = sortedDiffs[Math.floor((sortedDiffs.length-1)/2)];
+    const firstQid = pickAdaptiveQuestion(cats, diffs, startDiff, []);
+    roomRef(state.roomCode).update({
+      status: state.pvpMode ? 'picking' : 'question', currentIndex:0, questionStart:Date.now(),
+      duration:dur, correctIndex:null, questionIds:[firstQid], pvpMode: !!state.pvpMode,
+      pvpAsker:null, pvpTarget:null, fastestId:null,
+      adaptiveMode:true, adaptiveDiff:startDiff, gameCats:cats, gameDiffs:diffs, totalCount:count
+    });
+    return;
+  }
   // اسحب عشوائيًا من مجموعة الفئات المختارة فقط
   const shuffledPool = [...pool];
   for(let i=shuffledPool.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [shuffledPool[i],shuffledPool[j]]=[shuffledPool[j],shuffledPool[i]]; }
   const questionIds = shuffledPool.slice(0, count);
   roomRef(state.roomCode).update({
     status: state.pvpMode ? 'picking' : 'question', currentIndex:0, questionStart:Date.now(),
-    duration:dur, correctIndex:null, questionIds, pvpMode: !!state.pvpMode, pvpAsker:null, pvpTarget:null, fastestId:null
+    duration:dur, correctIndex:null, questionIds, pvpMode: !!state.pvpMode, pvpAsker:null, pvpTarget:null, fastestId:null,
+    adaptiveMode:false, totalCount:count
   });
 }
 function togglePvpMode(){ state.pvpMode = !state.pvpMode; render(); }
+function toggleAdaptiveMode(){ state.adaptiveMode = !state.adaptiveMode; render(); }
+/* ================== الصعوبة التكيّفية ==================
+   يختار سؤالًا عشوائيًا من نفس مستوى الصعوبة المستهدف؛ إن لم يتوفر، يقرّب
+   لأقرب مستوى متاح ضمن الأسئلة المتبقية غير المستخدمة بعد. */
+function pickAdaptiveQuestion(cats, diffs, targetDiff, usedIds){
+  const pool = QUESTIONS.map((q,i)=>i).filter(i =>
+    cats.includes(QUESTIONS[i].cat) && diffs.includes(QUESTIONS[i].diff||2) && !usedIds.includes(i)
+  );
+  if(!pool.length) return null;
+  let candidates = pool.filter(i => (QUESTIONS[i].diff||2) === targetDiff);
+  if(!candidates.length){
+    let bestDist = Infinity;
+    pool.forEach(i => {
+      const d = Math.abs((QUESTIONS[i].diff||2) - targetDiff);
+      if(d < bestDist) bestDist = d;
+    });
+    candidates = pool.filter(i => Math.abs((QUESTIONS[i].diff||2) - targetDiff) === bestDist);
+  }
+  return candidates[Math.floor(Math.random()*candidates.length)];
+}
+
 function printQuestionsPDF(allCats){
   const cats = allCats ? CATEGORIES : ((state.selectedCats && state.selectedCats.length) ? state.selectedCats : CATEGORIES);
   const list = QUESTIONS.filter(q => cats.includes(q.cat));
@@ -994,6 +1036,19 @@ function revealAnswer(){
       }
     }
     roomRef(state.roomCode).update({ status:'reveal', correctIndex:q.correct, players:updatedPlayers, fastestId: fastestId || null });
+    if(state.adaptiveMode){
+      const totalPlayers = Object.keys(state.players||{}).length;
+      let correctCount = 0;
+      for(const id in answers){ if(updatedPlayers[id] && answers[id].choice === q.correct) correctCount++; }
+      const ratio = totalPlayers > 0 ? correctCount/totalPlayers : 0;
+      let newDiff = state.adaptiveDiff || 2;
+      if(ratio >= 0.6 && newDiff < 3) newDiff += 1;
+      else if(ratio < 0.3 && newDiff > 1) newDiff -= 1;
+      if(newDiff !== state.adaptiveDiff){
+        state.adaptiveDiff = newDiff;
+        roomRef(state.roomCode).update({ adaptiveDiff:newDiff });
+      }
+    }
   });
   clearTimeout(nextTimeout);
   nextTimeout = setTimeout(nextQuestion, REVEAL_DURATION);
@@ -1033,10 +1088,25 @@ function nextQuestion(){
   const nextIndex = state.currentIndex + 1;
   if(nextIndex >= totalQuestions()){
     roomRef(state.roomCode).update({ status:'end' });
-  } else if(state.pvpMode){
-    roomRef(state.roomCode).update({ status:'picking', currentIndex:nextIndex, pvpAsker:null, pvpTarget:null, correctIndex:null, fastestId:null });
+    return;
+  }
+  let extraUpdates = {};
+  if(state.adaptiveMode){
+    const cats = state.gameCats || CATEGORIES;
+    const diffs = state.gameDiffs || [1,2,3];
+    const usedIds = state.questionIds || [];
+    const nextQid = pickAdaptiveQuestion(cats, diffs, state.adaptiveDiff || 2, usedIds);
+    if(nextQid === null){
+      // انتهت الأسئلة المتاحة قبل الوصول للعدد المستهدف، أنهِ اللعبة بسلام
+      roomRef(state.roomCode).update({ status:'end' });
+      return;
+    }
+    extraUpdates.questionIds = [...usedIds, nextQid];
+  }
+  if(state.pvpMode){
+    roomRef(state.roomCode).update({ ...extraUpdates, status:'picking', currentIndex:nextIndex, pvpAsker:null, pvpTarget:null, correctIndex:null, fastestId:null });
   } else {
-    roomRef(state.roomCode).update({ status:'question', currentIndex:nextIndex, questionStart:Date.now(), duration:state.duration, correctIndex:null, fastestId:null });
+    roomRef(state.roomCode).update({ ...extraUpdates, status:'question', currentIndex:nextIndex, questionStart:Date.now(), duration:state.duration, correctIndex:null, fastestId:null });
   }
 }
 function randomPickPlayers(){
@@ -1133,7 +1203,25 @@ function render(){
     return;
   }
 
-  if(state.screen === 'instructions'){
+  if(state.screen === 'splash'){
+    html = `
+      <div class="stack" style="text-align:center; justify-content:center; min-height:70vh;">
+        <div>
+          <h1 style="font-size:52px; margin:0; line-height:1.15; letter-spacing:1px;">جمان <span style="color:var(--yellow);">Jumaan</span></h1>
+          <p class="muted" style="font-size:17px; margin:10px 0 4px;">مسابقة ثقافية جماعية حيّة</p>
+          <p class="muted" style="font-size:13px; margin:0; opacity:0.75;">إعداد أبو جمان كليب بن أحمد الزهراني</p>
+        </div>
+        <div class="card stack" style="margin-top:22px;">
+          <p class="muted" style="text-align:center; margin:0; line-height:1.7;">
+            اجمع أصدقاءك وعائلتك بغرفة واحدة من أي جهاز ومكان، وتنافسوا لحظيًا على أكثر من 470 سؤال بخمس فئات ثقافية،
+            مع مؤقّت لكل سؤال ونظام نقاط يكافئ السرعة والصحّة.
+          </p>
+        </div>
+        <button class="btn-primary btn-block" style="margin-top:20px;" onclick="state.screen='instructions'; render();">التالي ←</button>
+      </div>`;
+  }
+
+  else if(state.screen === 'instructions'){
     html = `
       <div class="stack">
         <div class="eyebrow">قبل ما تبدأ · جمان Jumaan</div>
@@ -1305,6 +1393,11 @@ function render(){
               <span onclick="togglePvpMode()" class="pill" style="cursor:pointer; user-select:none; border:1.5px solid ${state.pvpMode?'var(--yellow)':'var(--line)'}; color:${state.pvpMode?'var(--yellow)':'var(--muted)'};">${state.pvpMode?'✓ مفعّل':'غير مفعّل'}</span>
             </div>
             ${state.pvpMode ? '<p class="muted" style="font-size:12.5px; margin:0;">قبل كل سؤال بتختار (أو تسحب عشوائيًا) لاعب يسأل ولاعب يجاوب — باقي اللاعبين يتفرجون بس.</p>' : ''}
+            <div class="row" style="justify-content:space-between; align-items:center; background:rgba(255,255,255,0.04); border-radius:12px; padding:12px 14px; margin-top:4px;">
+              <span style="font-size:14px;">🧠 صعوبة تكيّفية</span>
+              <span onclick="toggleAdaptiveMode()" class="pill" style="cursor:pointer; user-select:none; border:1.5px solid ${state.adaptiveMode?'var(--yellow)':'var(--line)'}; color:${state.adaptiveMode?'var(--yellow)':'var(--muted)'};">${state.adaptiveMode?'✓ مفعّل':'غير مفعّل'}</span>
+            </div>
+            ${state.adaptiveMode ? '<p class="muted" style="font-size:12.5px; margin:0;">الأسئلة ترتفع صعوبة تلقائيًا كل ما أغلب اللاعبين يجاوبون صح، وتنخفض إذا أغلبهم يخطئ — ضمن مستويات الصعوبة المختارة أعلاه.</p>' : ''}
           </div>
           <button class="btn-primary btn-block ${players.length===0?'btn-disabled':''}" ${players.length===0?'disabled':''} onclick="startGame()">ابدأ اللعبة</button>
         </div>
